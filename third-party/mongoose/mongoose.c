@@ -156,9 +156,9 @@ typedef long off_t;
 #define fileno(x) _fileno(x)
 #endif // !fileno MINGW #defines fileno
 
-typedef struct {HANDLE signal, broadcast;} pthread_cond_t;
-
 #if 0 /* NTOP */
+typedef struct { HANDLE signal, broadcast; } pthread_cond_t;
+
 typedef HANDLE pthread_mutex_t;
 typedef DWORD pthread_t;
 #define pid_t HANDLE // MINGW typedefs pid_t to int. Using #define here.
@@ -278,8 +278,11 @@ typedef int SOCKET;
 #include "mongoose.h"
 
 #ifdef USE_LUA
+
+#if 0
 #include <lua.h>
 #include <lauxlib.h>
+#endif
 
 #if 1 /* ntop */
 #ifndef LUA_OK
@@ -727,7 +730,7 @@ struct mg_request_info *mg_get_request_info(struct mg_connection *conn) {
   return &conn->request_info;
 }
 
-static void mg_strlcpy(register char *dst, register const char *src, size_t n) {
+static void mg_strlcpy(char *dst, const char *src, size_t n) {
   for (; *src != '\0' && n > 1; n--) {
     *dst++ = *src++;
   }
@@ -872,6 +875,8 @@ static char *skip(char **buf, const char *delimiters) {
 static const char *get_header(const struct mg_request_info *ri,
 			      const char *name) {
   int i;
+
+  if(!ri) return NULL;
 
   for (i = 0; i < ri->num_headers; i++)
     if (!mg_strcasecmp(name, ri->http_headers[i].name))
@@ -1287,6 +1292,15 @@ static int mg_mkdir(const char *path, int mode) {
   }
 
   return result;
+}
+
+int readdir_r(DIR *dirp, struct dirent *entry, struct dirent **result) {
+	*result = readdir(dirp);
+
+	if (*result == NULL)
+		return(-1);
+	else
+		return(0);
 }
 
 #ifndef HAVE_POLL
@@ -2127,7 +2141,7 @@ static void MD5Init(MD5_CTX *ctx) {
 }
 
 static void MD5Transform(uint32_t buf[4], uint32_t const in[16]) {
-  register uint32_t a, b, c, d;
+  uint32_t a, b, c, d;
 
   a = buf[0];
   b = buf[1];
@@ -4499,7 +4513,7 @@ static int set_ports_option(struct mg_context *ctx) {
 					   (void *)
 #endif
 					   &on, sizeof(on))) != 0 ||
-	       (rc_bind = bind(so.sock,
+	       (rc_bind = ::bind(so.sock,
 			       &sa->sa,
 			       (sa->sa.sa_family == AF_INET) ? sizeof(sa->sin) : sizeof(sa->sin6))
 		) != 0 ||
@@ -4754,10 +4768,18 @@ static int set_ssl_option(struct mg_context *ctx) {
 #ifndef SSL_OP_NO_TLSv1
 #define SSL_OP_NO_TLSv1 0x04000000L
 #endif
+#ifndef SSL_OP_NO_SSLv2
+#define SSL_OP_NO_SSLv2 0x01000000L
+#endif
+#ifndef SSL_OP_NO_SSLv3
+#define SSL_OP_NO_SSLv3 0x02000000L
+#endif
  
     long opts = SSL_CTX_get_options(ctx->ssl_ctx);
     
     opts |= SSL_OP_NO_TLSv1;
+    opts |= SSL_OP_NO_SSLv2;
+    opts |= SSL_OP_NO_SSLv3;
     SSL_CTX_set_options(ctx->ssl_ctx, opts);
   }
 #endif
@@ -5024,6 +5046,12 @@ static void process_new_connection(struct mg_connection *conn) {
 	       strcmp(ri->http_version, "1.1")) {
       snprintf(ebuf, sizeof(ebuf), "Bad HTTP version: [%s]", ri->http_version);
       send_http_error(conn, 505, "Bad HTTP version", "%s", ebuf);
+    } else if (!strcmp(ri->http_version, "1.1") &&
+	       !mg_get_header(conn, "Host")) {
+      snprintf(ebuf, sizeof(ebuf), "Missing mandatory Host header");
+      /* RFC 7230: "A server MUST respond with a 400 (Bad Request) status code to any HTTP/1.1
+	 request message that lacks a Host header field. */
+      send_http_error(conn, 400, "Bad Request", "%s", ebuf);
     }
 
     if (ebuf[0] == '\0') {

@@ -9,29 +9,30 @@ GPP=@CXX@
 INSTALL_DIR=$(DESTDIR)$(prefix)
 MAN_DIR=$(DESTDIR)@MAN_DIR@
 
-######
-HAS_NDPI=$(shell pkg-config --exists libndpi; echo $$?)
-ifeq ($(HAS_NDPI), 0)
-    NDPI_INC = $(shell pkg-config --cflags libndpi | sed -e 's/\(-I[^ \t]*\)/\1\/libndpi/g')
-    NDPI_LIB = $(shell pkg-config --libs libndpi)
-    NDPI_LIB_DEP =
+# FreeBSD does not include wget by default, but the base system
+# includes fetch, which provides similar functionality.
+ifeq ($(OS), $(filter $(OS), FreeBSD))
+	GET_UTIL = fetch
 else
-    NDPI_INC=-I@NDPI_HOME@/src/include
-    NDPI_LIB=@NDPI_HOME@/src/lib/.libs/libndpi.a
-    NDPI_LIB_DEP=$(NDPI_LIB)
+	GET_UTIL = wget -nc
 endif
+
+######
+NDPI_LIB = @NDPI_LIB@
+NDPI_INC = @NDPI_INC@
+NDPI_LIB_DEP = @NDPI_LIB_DEP@
 ######
 LIBPCAP=-lpcap
 ######
 MONGOOSE_HOME=${PWD}/third-party/mongoose
 MONGOOSE_INC=-I$(MONGOOSE_HOME)
 ######
-HAS_LUAJIT=$(shell pkg-config --exists luajit; echo $$?)
+HAS_LUAJIT=$(shell pkg-config --atleast-version=2.1.0 luajit; echo $$?)
 ifeq ($(HAS_LUAJIT), 0)
 	LUAJIT_INC = $(shell pkg-config --cflags luajit)
 	LUAJIT_LIB = $(shell pkg-config --libs luajit)
 else
-	LUAJIT_HOME=${PWD}/third-party/LuaJIT-2.0.3
+	LUAJIT_HOME=${PWD}/third-party/LuaJIT-2.1.0-beta3
 	LUAJIT_INC=-I$(LUAJIT_HOME)/src
 	LUAJIT_LIB=$(LUAJIT_HOME)/src/libluajit.a
 endif
@@ -40,7 +41,7 @@ LIBRRDTOOL_HOME=${PWD}/third-party/rrdtool-1.4.8
 HAS_LIBRRDTOOL=$(shell pkg-config --atleast-version=1.4.8 librrd; echo $$?)
 ifeq ($(HAS_LIBRRDTOOL), 0)
 	LIBRRDTOOL_INC = $(shell pkg-config --cflags librrd)
-	LIBRRDTOOL_LIB = $(shell pkg-config --libs librrd)
+	LIBRRDTOOL_LIB = $(shell pkg-config --libs librrd) # -lrrd_th
 else
 	LIBRRDTOOL_INC=-I$(LIBRRDTOOL_HOME)/src/
 	ifeq ($(OS), $(filter $(OS), OpenBSD FreeBSD))
@@ -51,8 +52,10 @@ else
 endif
 ######
 ifeq ($(OS), $(filter $(OS), FreeBSD))
-	LIBNBPF_HOME=${PWD}/../PF_RING/userland/nbpf
-	LIBNBPF_LIB=$(LIBNBPF_HOME)/libnbpf.a
+	ifneq (, $(wildcard "${PWD}/../PF_RING/userland/nbpf/libnbpf.a"))
+		LIBNBPF_HOME=${PWD}/../PF_RING/userland/nbpf
+		LIBNBPF_LIB=$(LIBNBPF_HOME)/libnbpf.a
+	endif
 endif
 ######
 HTTPCLIENT_INC=${PWD}/third-party/http-client-c/src/
@@ -67,17 +70,19 @@ else
 	JSON_LIB=$(JSON_HOME)/.libs/libjson-c.a
 endif
 ######
-HAS_SODIUM=$(shell pkg-config --exists libsodium; echo $$?)
-ifeq ($(HAS_SODIUM), 0)
+
+ifeq (@NEDGE@, 0)
+ HAS_SODIUM=$(shell pkg-config --exists libsodium; echo $$?)
+ ifeq ($(HAS_SODIUM), 0)
 	SODIUM_INC = $(shell pkg-config --cflags libsodium)
 	SODIUM_LIB = $(shell pkg-config --libs libsodium)
-else
+ else
 	SODIUM_INC=
 	SODIUM_LIB=
-endif
-######
-HAS_ZEROMQ=$(shell pkg-config --exists libzmq; echo $$?)
-ifeq ($(HAS_ZEROMQ), 0)
+ endif
+
+ HAS_ZEROMQ=$(shell pkg-config --exists libzmq; echo $$?)
+ ifeq ($(HAS_ZEROMQ), 0)
 	ZEROMQ_INC = $(shell pkg-config --cflags libzmq)
 	ZMQ_STATIC=/usr/local/lib/libzmq.a
 	ifeq ($(wildcard $(ZMQ_STATIC)),)
@@ -85,15 +90,17 @@ ifeq ($(HAS_ZEROMQ), 0)
 	else
 		ZEROMQ_LIB = $(ZMQ_STATIC)
 	endif
-else
+ else
 	ZEROMQ_HOME=${PWD}/third-party/zeromq-4.1.3
 	ZEROMQ_INC=-I$(ZEROMQ_HOME)/include
 	ZEROMQ_LIB=$(ZEROMQ_HOME)/.libs/libzmq.a
+ endif
 endif
+
 ######
 TARGET = ntopng
-LIBS = $(NDPI_LIB) $(LIBPCAP) $(LUAJIT_LIB) $(LIBRRDTOOL_LIB) $(LIBNBPF_LIB) $(ZEROMQ_LIB) $(JSON_LIB) $(SODIUM_LIB) @HIREDIS_LIB@ @SQLITE_LIB@ @MYSQL_LIB@ @SSL_LIB@ @LINK_OPTS@ @GEOIP_LIB@ @LDFLAGS@ @PRO_LIBS@ -lm -lpthread
-CPPFLAGS = -g @CFLAGS@ @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(SODIUM_INC) $(NDPI_INC) $(LUAJIT_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) @MYSQL_INC@ @CPPFLAGS@ -I$(HTTPCLIENT_INC) @SSL_INC@ @PRO_INC@ -DDATA_DIR='"$(datadir)"' -I${PWD}/third-party/libgeohash -I${PWD}/third-party/patricia # -D_GLIBCXX_DEBUG
+NLIBS = $(NDPI_LIB) $(LIBPCAP) $(LUAJIT_LIB) $(LIBRRDTOOL_LIB) $(LIBNBPF_LIB) $(ZEROMQ_LIB) $(JSON_LIB) $(SODIUM_LIB) @HIREDIS_LIB@ @SQLITE_LIB@ @MYSQL_LIB@ @SSL_LIB@ @LINK_OPTS@ @GEOIP_LIB@ @LDFLAGS@ @PRO_LIBS@ -lm -lpthread
+CPPFLAGS = -g @CFLAGS@ @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(SODIUM_INC) $(NDPI_INC) $(LUAJIT_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) @MYSQL_INC@ @CPPFLAGS@ -I$(HTTPCLIENT_INC) @SSL_INC@ @PRO_INCS@ -DDATA_DIR='"$(datadir)"' -I${PWD}/third-party/libgeohash -I${PWD}/third-party/patricia # -D_GLIBCXX_DEBUG
 ######
 # ntopng-1.0_1234.x86_64.rpm
 PLATFORM = `uname -p`
@@ -101,11 +108,12 @@ REVISION = @GIT_RELEASE@
 PACKAGE_VERSION = @PACKAGE_VERSION@
 NTOPNG_VERSION = @NTOPNG_VERSION@
 RPM_PKG = $(TARGET)-$(NTOPNG_VERSION)-@REVISION@.$(PLATFORM).rpm
+RPM_PCAP_PKG = $(TARGET)-pcap-$(NTOPNG_VERSION)-@REVISION@.$(PLATFORM).rpm
 RPM_DATA_PKG = $(TARGET)-data-$(NTOPNG_VERSION)-@REVISION@.noarch.rpm
 ######
 
 ifeq ($(OS),Darwin)
-LIBS += -lstdc++.6
+NLIBS += -lstdc++.6
 endif
 
 LIB_TARGETS =
@@ -146,7 +154,7 @@ HEADERS = $(wildcard include/*.h) @PRO_HEADERS@
 .PRECIOUS: $(TARGET) $(OBJECTS)
 
 $(TARGET): $(OBJECTS) $(LIBRRDTOOL) Makefile
-	$(GPP) $(OBJECTS) -Wall $(LIBS) -o $@
+	$(GPP) $(OBJECTS) -Wall $(NLIBS) -o $@
 
 $(LUAJIT_LIB):
 	cd $(LUAJIT_HOME); @GMAKE@
@@ -166,7 +174,7 @@ clean:
 	-rm -f $(TARGET)
 
 cert:
-	openssl req -new -x509 -sha1 -extensions v3_ca -nodes -days 365 -out cert.pem
+	openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out cert.pem
 	cat privkey.pem cert.pem > httpdocs/ssl/ntopng-cert.pem
 	/bin/rm -f privkey.pem cert.pem
 
@@ -178,12 +186,15 @@ geoip:
 	  cp ~/dat_files/* httpdocs/geoip; gunzip -f httpdocs/geoip/*.dat.gz ; \
 	else \
 	  cd httpdocs/geoip; \
-	  wget -nc http://geolite.maxmind.com/download/geoip/database/GeoLiteCity.dat.gz; \
-	  wget -nc http://geolite.maxmind.com/download/geoip/database/GeoLiteCityv6-beta/GeoLiteCityv6.dat.gz; \
-	  wget -nc http://download.maxmind.com/download/geoip/database/asnum/GeoIPASNum.dat.gz; \
-	  wget -nc http://download.maxmind.com/download/geoip/database/asnum/GeoIPASNumv6.dat.gz; \
+	  $(GET_UTIL) http://geolite.maxmind.com/download/geoip/database/GeoLiteCity.dat.gz; \
+	  $(GET_UTIL) http://geolite.maxmind.com/download/geoip/database/GeoLiteCityv6-beta/GeoLiteCityv6.dat.gz; \
+	  $(GET_UTIL) http://download.maxmind.com/download/geoip/database/asnum/GeoIPASNum.dat.gz; \
+	  $(GET_UTIL) http://download.maxmind.com/download/geoip/database/asnum/GeoIPASNumv6.dat.gz; \
 	  gunzip -f *.dat.gz ; \
 	fi
+
+trackers:
+	./tools/download_trackers.sh httpdocs/other/trackers.txt
 
 # Do NOT build package as root (http://wiki.centos.org/HowTos/SetupRpmBuildEnvironment)
 #	mkdir -p $(HOME)/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -198,11 +209,14 @@ protools:
 build-rpm-ntopng: ntopng protools
 	rpmbuild -bb ./packages/ntopng.spec
 	@./packages/rpm-sign.exp $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PKG)
+	@if test -f $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PCAP_PKG) ; then \
+	 ./packages/rpm-sign.exp $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PCAP_PKG); \
+	fi
 	@echo ""
 	@echo "Package contents:"
 	@rpm -qpl $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PKG)
 	@echo "The package is now available in $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PKG)"
-
+	@echo "The package is now available in $(HOME)/rpmbuild/RPMS/$(PLATFORM)/$(RPM_PCAP_PKG)"
 
 build-rpm-ntopng-data: geoip
 	rpmbuild -bb ./packages/ntopng-data.spec
@@ -230,7 +244,7 @@ install: ntopng
 	cp ntopng $(INSTALL_DIR)/bin
 	cp ./ntopng.8 $(MAN_DIR)/man8
 	cp -r ./httpdocs $(INSTALL_DIR)/share/ntopng
-	cp -Lr ./scripts $(INSTALL_DIR)/share/ntopng # L dereference symlinks
+	cp -LR ./scripts $(INSTALL_DIR)/share/ntopng # L dereference symlinks
 	find $(INSTALL_DIR)/share/ntopng -name "*~"   | xargs /bin/rm -f
 	find $(INSTALL_DIR)/share/ntopng -name ".git" | xargs /bin/rm -rf
 
@@ -239,11 +253,18 @@ uninstall:
 	if test -f $(MAN_DIR)/man8/ntopng.8; then rm $(MAN_DIR)/man8/ntopng.8; fi;
 	if test -d $(INSTALL_DIR)/share/ntopng; then rm -r $(INSTALL_DIR)/share/ntopng; fi;
 
-Makefile: @GIT_INDEX@
-	@echo ""
-	@echo "Re-running configure as the git release has changed"
-	@echo ""
+Makefile: configure Makefile.in
 	./configure
+
+minify:
+	cd httpdocs/js; make UGLIFY_VERSION=@UGLIFYJS_MAJOR_VERSION@ minify
+
+# Disabled to avoid too many recompilations
+#configure: @GIT_INDEX@
+#	@echo ""
+#	@echo "Re-running autogen as the git release has changed"
+#	@echo ""
+#	./autogen.sh
 
 cppcheck:
 	cppcheck --template='{file}:{line}:{severity}:{message}' --quiet --enable=all --force -I include/ @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(NDPI_INC) $(LUAJIT_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) src/*.cpp

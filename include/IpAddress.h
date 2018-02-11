@@ -65,15 +65,17 @@ class IpAddress {
   inline void set(struct ndpi_in6_addr *_ipv6)        { addr.ipVersion = 6, memcpy(&addr.ipType.ipv6, _ipv6, sizeof(struct ndpi_in6_addr)); 
                                                         addr.privateIP = false; compute_key(); }
   inline void set(IpAddress *ip)                      { memcpy(&addr, &ip->addr, sizeof(struct ipAddress)); ip_key = ip->ip_key; };
+  inline void set(struct ipAddress *ip)               { memcpy(&addr, ip, sizeof(struct ipAddress)); compute_key(); };
   void set(char *ip);  
   inline bool isPrivateAddress()                      { return(addr.privateIP); };
   inline bool isMulticastAddress()                    { return(addr.multicastIP); };
   inline bool isBroadcastAddress()                    { return(addr.broadcastIP); };
+  inline u_int8_t getVersion()                        { return(addr.ipVersion); };
+  inline void setVersion(u_int8_t version)            { addr.ipVersion = version; };
   char* print(char *str, u_int str_len, u_int8_t bitmask = 0xFF);
   char* printMask(char *str, u_int str_len, bool isLocalIP);    
   bool isLocalHost(int16_t *network_id);
   bool isLocalInterfaceAddress();
-  void deserialize(json_object *o);
   char* serialize();
   json_object* getJSONObject();
   bool match(AddressTree *tree);

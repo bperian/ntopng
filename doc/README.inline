@@ -93,13 +93,14 @@ Supposing to have this network configuration
 
 PRIOR TO START NTOPNG, you need to do once:
 1. Setup a tap interface on your box
-   # tunctl -t tap0
+   # tunctl -t tap0  (On Centos: # ip tuntap add tap0 mode tap)
    # ifconfig tap0 172.16.0.1 netmask 255.255.255.0
    # ifconfig tap0 up
 
 2. Setup NAT
    # iptables --table nat --append POSTROUTING --out-interface eth0 -j MASQUERADE
    # iptables --append FORWARD --in-interface tap0 -j ACCEPT
+   # echo 1 > /proc/sys/net/ipv4/ip_forward
 
 3. Setup your DHCP server serving addresses on tap0 from
    network 172.16.0.0/24 (of course except 172.16.0.1 that is
@@ -195,6 +196,7 @@ correct host pool. In order to enable this feature
 - you need the enterprise version of ntopng
 - the captive portal option must be enabled in the ntopng preferences menu
 - ntopng must be active on port 80 (and port a different port) for authenticating users (-w 80,3000)
+- ntopng can be activated also on port 443 (-W 443) for authenticating users over SSL (e.g., when they require a page over HTTPS)
 - you can optionally start ntopng also in SSL (port 443) but you must have port 80 active
 
 When the captive portal is used, port 80 is used only for that purpose (i.e. it cannot be

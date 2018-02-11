@@ -26,23 +26,14 @@
 
 class PeriodicActivities {
  private:
-  pthread_t housekeepingLoop, secondLoop, minuteLoop, fiveMinutesLoop, hourLoop, dayLoop;
+  ThreadedActivity *activities[CONST_MAX_NUM_THREADED_ACTIVITIES];
+  u_int16_t num_activities;
 
-  u_int32_t roundTime(u_int32_t now, u_int32_t rounder, int32_t offset_from_utc = 0);
-  void runScript(char *path, u_int32_t when);
-  void startupActivities();
  public:
   PeriodicActivities();
   ~PeriodicActivities();
 
-  void loop();
   void startPeriodicActivitiesLoop();
-  void housekeepingActivitiesLoop();
-  void secondActivitiesLoop();
-  void minuteActivitiesLoop();
-  void fiveMinutesActivitiesLoop();
-  void hourActivitiesLoop();
-  void dayActivitiesLoop();
 };
 
 #endif /* _PERIODIC_ACTIVITIES_H_ */

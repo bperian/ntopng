@@ -1,3 +1,4 @@
+require("lua_utils")
 local host_pools_utils = require 'host_pools_utils'
 require("prefs_utils")
 
@@ -13,14 +14,14 @@ print [[
     <div class="modal-content">
       <div class="modal-header">
   <button type="button" class="close" data-dismiss="modal" aria-hidden="true"><i class="fa fa-times"></i></button>
-  <h3 id="password_dialog_label">Manage User <span id="password_dialog_title"></span></h3>
+  <h3 id="password_dialog_label">]] print(i18n("manage_users.manage_user_x", {user=[[<span id="password_dialog_title"></span>]]})) print[[ </h3>
 </div>
 
 <div class="modal-body">
 
   <div class="tabbable"> <!-- Only required for left/right tabs -->
   <ul class="nav nav-tabs" role="tablist" id="edit-user-container">
-    <li class="active"><a href="#change-password-dialog" role="tab" data-toggle="tab"> Password </a></li>
+    <li class="active"><a href="#change-password-dialog" role="tab" data-toggle="tab"> ]] print(i18n("login.password")) print[[ </a></li>
 ]]
 
 local captive_portal_user = false
@@ -29,7 +30,7 @@ if is_captive_portal_active and _GET["captive_portal_users"] ~= nil then
 end
 
 if(user_group=="administrator") then
-   print[[<li><a href="#change-prefs-dialog" role="tab" data-toggle="tab"> Preferences </a></li>]]
+   print[[<li><a href="#change-prefs-dialog" role="tab" data-toggle="tab"> ]] print(i18n("prefs.preferences")) print[[ </a></li>]]
 end
    print[[
   </ul>
@@ -62,7 +63,7 @@ if(user_group ~= "administrator") then
    col_md_size = "4"
 print [[
   <div class='form-group col-md-]] print(col_md_size) print[[ has-feedback'>
-      <label for="" class="control-label">Old Password</label>
+      <label for="" class="control-label">]] print(i18n("manage_users.old_password")) print[[</label>
       <div class="input-group"><span class="input-group-addon"><i class="fa fa-lock"></i></span>
         <input id="old_password_input" type="password" name="old_password" value="" class="form-control" required>
       </div>
@@ -72,27 +73,27 @@ end
 
 print [[
   <div class='form-group has-feedback col-md-]] print(col_md_size) print[['>
-      <label for="" class="control-label">New Password</label>
+      <label for="" class="control-label">]] print(i18n("manage_users.new_password")) print[[</label>
       <div class="input-group"><span class="input-group-addon"><i class="fa fa-lock"></i></span>
         <input id="new_password_input" type="password" name="new_password" value="" class="form-control" pattern="]] print(getPasswordInputPattern()) print[[" required>
       </div>
   </div>
 
   <div class='form-group has-feedback col-md-]] print(col_md_size) print[['>
-      <label for="" class="control-label">Confirm New Password</label>
+      <label for="" class="control-label">]] print(i18n("manage_users.new_password_confirm")) print[[</label>
       <div class="input-group"><span class="input-group-addon"><i class="fa fa-lock"></i></span>
         <input id="confirm_new_password_input" type="password" name="confirm_password" value="" class="form-control" pattern="]] print(getPasswordInputPattern()) print[[" required>
       </div>
   </div>
 </div>
 
-<div><small>Allowed characters are ISO 8859-1 (latin1) upper and lower case letters, numbers and special symbols.  </small></div>
+<div><small>]] print(i18n("manage_users.allowed_passwd_charset")) print[[.  </small></div>
 
 <br>
 
 <div class="row">
     <div class="form-group col-md-12 has-feedback">
-      <button id="password_reset_submit" class="btn btn-primary btn-block">Change User Password</button>
+      <button id="password_reset_submit" class="btn btn-primary btn-block">]] print(i18n("manage_users.change_user_password")) print[[</button>
     </div>
 </div>
 
@@ -117,24 +118,24 @@ if not captive_portal_user then
    print[[
 <div class="row">
   <div class='col-md-6 form-group has-feedback'>
-      <label class="input-label">User Role</label>
+      <label class="input-label">]] print(i18n("manage_users.user_role")) print[[</label>
       <div class="input-group" style="width:100%;">
         <select id="host_role_select" name="user_role" class="form-control">
-          <option value="unprivileged">Non Privileged User</option>
-          <option value="administrator">Administrator</option>
+          <option value="unprivileged">]] print(i18n("manage_users.non_privileged_user")) print[[</option>
+          <option value="administrator">]] print(i18n("manage_users.administrator")) print[[</option>
         </select>
       </div>
   </div>
 
   <div class='col-md-6 form-group has-feedback'>
-      <label class="form-label">Allowed Interface</label>
+      <label class="form-label">]] print(i18n("manage_users.allowed_interface")) print[[</label>
       <div class="input-group" style="width:100%;">
         <select name="allowed_interface" id="allowed_interface" class="form-control">
-          <option value="">Any Interface</option>
+          <option value="">]] print(i18n("manage_users.any_interface")) print[[</option>
 ]]
    for _, interface_name in pairsByValues(interface.getIfNames(), asc) do
       -- io.write(interface_name.."\n")
-      print('<option value="'..getInterfaceId(interface_name)..'"> '..interface_name..'</option>')
+      print('<option value="'..getInterfaceId(interface_name)..'"> '..getInterfaceNameAlias(interface_name)..'</option>')
    end
    print[[
         </select>
@@ -146,11 +147,17 @@ if not captive_portal_user then
 
 <div class="row">
     <div class="form-group col-md-12 has-feedback">
-      <label class="control-label">Allowed Networks</label>
+      <label class="control-label">]] print(i18n("manage_users.allowed_networks")) print[[</label>
+      <div class="pull-right" style="margin-left:1em;">
+        <label class="control-label"></label>
+        <div>
+          <button type="button" class="btn btn-default" onclick="$('#networks_input').val('0.0.0.0/0,::/0');">Default</button>
+        </div>
+      </div>
       <div class="input-group"><span class="input-group-addon"><span class="glyphicon glyphicon-tasks"></span></span>
         <input id="networks_input" type="text" name="allowed_networks" value="" class="form-control" required>
       </div>
-      <small>Comma separated list of networks this user can view. Example: 192.168.1.0/24,172.16.0.0/16</small>
+      <small>]] print(i18n("manage_users.allowed_networks_descr")) print[[ 192.168.1.0/24,172.16.0.0/16</small>
     </div>
 </div>
 
@@ -184,10 +191,10 @@ else -- captive portal user
     </div>
 
     <div class="form-group col-md-6 has-feedback">
-      <label class="form-label">Authentication Lifetime</label>
+      <label class="form-label">]] print(i18n("manage_users.authentication_lifetime")) print[[</label>
       <div class="input-group">
-        <label class="radio-inline"><input type="radio" id="lifetime_unlimited" name="lifetime_unlimited" checked>Unlimited</label>
-        <label class="radio-inline"><input type="radio" id="lifetime_limited" name="lifetime_limited">Expires after</label>
+        <label class="radio-inline"><input type="radio" id="lifetime_unlimited" name="lifetime_unlimited" checked>]] print(i18n("manage_users.unlimited")) print[[</label>
+        <label class="radio-inline"><input type="radio" id="lifetime_limited" name="lifetime_limited">]] print(i18n("manage_users.expires_after")) print[[</label>
       </div>
     </div>
 </div>
@@ -223,8 +230,33 @@ print[[
 <br>
 
 <div class="row">
+    <div class="form-group col-md-6 has-feedback">
+      <label class="form-label">]] print(i18n("language")) print[[</label>
+      <div class="input-group">
+        <span class="input-group-addon"><i class="fa fa-language" aria-hidden="true"></i></span>
+        <select name="user_language" id="user_language" class="form-control">]]
+
+for _, lang in pairs(locales_utils.getAvailableLocales()) do
+   print('<option value="'..lang["code"]..'">'..i18n("locales." .. lang["code"])..'</option>')
+end
+
+print[[
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group col-md-6 has-feedback">
+      <label class="form-label"></label>
+      <div class="input-group">
+      </div>
+    </div>
+</div>
+
+<br>
+
+<div class="row">
     <div class="form-group col-md-12 has-feedback">
-      <button id="pref_change" class="btn btn-primary btn-block">Change User Preferences</button>
+      <button id="pref_change" class="btn btn-primary btn-block">]] print(i18n("manage_users.change_user_preferences")) print[[</button>
     </div>
 </div>
 
@@ -373,11 +405,11 @@ function reset_pwd_dialog(user) {
       $('#confirm_password_input').val('');
       $('#host_role_select option[value = '+data.group+']').attr('selected','selected');
       $('#networks_input').val(data.allowed_nets);
-      $('#allowed_interface option').filter(function () {
-        return $(this).html().trim() == data.allowed_ifname;
-      }).attr('selected','selected');
-      // $('#allowed_interface option[value = "'+data.allowed_ifname+'"]').attr('selected','selected');
+      $('#allowed_interface option[value="' + data.allowed_if_id + '"]').attr('selected','selected');
 
+      if(data.language !== "") {
+      $('#user_language option[value="' + data.language + '"]').attr('selected','selected');
+      }
       if(data.host_pool_id) {
         $('#old_host_pool_id').val(data.host_pool_id);
         $('#host_pool_id option[value = '+data.host_pool_id+']').attr('selected','selected');

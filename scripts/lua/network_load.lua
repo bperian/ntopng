@@ -43,17 +43,17 @@ function dumpInterfaceStats(interface_name)
       end
 
       if prefs.are_alerts_enabled == true then
-	 local alert_cache = interface.getCachedNumAlerts()
-	 res["engaged_alerts"]     = alert_cache["num_alerts_engaged"]
-	 res["alerts_stored"]      = alert_cache["alerts_stored"]
+	 local alert_cache = interface.getCachedNumAlerts() or {}
+	 res["engaged_alerts"]     = alert_cache["num_alerts_engaged"] or 0
+	 res["alerts_stored"]      = alert_cache["alerts_stored"] or 0
       end
 
-      res["num_flows"]  = ifstats.stats.flows
-      res["num_hosts"]  = ifstats.stats.hosts
-      res["num_devices"]  = ifstats.stats.devices
+      res["num_flows"]        = ifstats.stats.flows
+      res["num_hosts"]        = ifstats.stats.hosts
+      res["num_local_hosts"]  = ifstats.stats.local_hosts
+      res["num_devices"]      = ifstats.stats.devices
+
       res["epoch"]      = os.time()
-      res["tz_offset"]  = get_timezone_offset()
-      -- res["localtime"]  = format_time(res["epoch"], "!%H:%M:%S %z", res["tz_offset"])
       res["localtime"]  = os.date("%H:%M:%S %z", res["epoch"])
       res["uptime"]     = secondsToTime(uptime)
       res["system_host_stats"] = ntop.systemHostStat()
@@ -66,12 +66,20 @@ function dumpInterfaceStats(interface_name)
       res["local2remote"] = ifstats["localstats"]["bytes"]["local2remote"]
       res["remote2local"] = ifstats["localstats"]["bytes"]["remote2local"]
 
+      if ntop.isnEdge() then
+        res["bytes_upload"] = ifstats["eth"]["egress"]["bytes"]
+        res["bytes_download"] = ifstats["eth"]["ingress"]["bytes"]
+      end
+
       if(ifstats.zmqRecvStats ~= nil) then
 	 res["zmqRecvStats"] = {}
 	 res["zmqRecvStats"]["flows"] = ifstats.zmqRecvStats.flows
 	 res["zmqRecvStats"]["events"] = ifstats.zmqRecvStats.events
 	 res["zmqRecvStats"]["counters"] = ifstats.zmqRecvStats.counters
 	 res["zmqRecvStats"]["zmq_msg_drops"] = ifstats.zmqRecvStats.zmq_msg_drops
+
+	 res["zmq.num_flow_exports"] = ifstats["zmq.num_flow_exports"] or 0
+	 res["zmq.num_exporters"] = ifstats["zmq.num_exporters"] or 0
       end
       
       res["tcpPacketStats"] = {}
@@ -113,14 +121,13 @@ end
 
 local res = {}
 if(_GET["iffilter"] == "all") then
-   local names = interface.getIfNames()
-   local n = 1
-   local sortedKeys = getKeysSortedByValue(names, function(a, b) return a < b end)
-   for k,v in ipairs(sortedKeys) do
-      res[n] = dumpInterfaceStats(names[v])
-      n = n + 1
+   for _, ifname in pairs(interface.getIfNames()) do
+      local ifid = getInterfaceId(ifname)
+      -- ifid in the key must be a string or json.encode will think
+      -- its a lua array and will look for integers starting at one
+      res[ifid..""] = dumpInterfaceStats(ifname)
    end
 else
    res = dumpInterfaceStats(ifname)
 end
-print(json.encode(res, nil, 1))
+print(json.encode(res))

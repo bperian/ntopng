@@ -6,10 +6,11 @@ require "os"
 
 print [[
       <div id="footer"> <hr>
+      <p id="ntopng_update_available"></p>
    ]]
 
-ntop_version_check()
-
+local template = require "template_utils"
+local have_nedge = ntop.isnEdge()
 info = ntop.getInfo(true)
 
 print [[
@@ -18,37 +19,57 @@ print [[
 	<div class="col-xs-6 col-sm-4">]]
 print(info["product"])
 
-iface_id = interface.name2id(ifname)
+local iface_id = interface.name2id(ifname)
 
 interface.select(ifname)
-_ifstats = interface.getStats()
+local _ifstats = interface.getStats()
 
-if(info["version.enterprise_edition"]) then
-   print(" Enterprise")
-elseif(info["pro.release"]) then
-   print(" Pro [Small Business Edition]")
-else
-   print(" Community")
-end
-
-if(info["version.embedded_edition"] == true) then
-   print("/Embedded")
-end
+printntopngRelease(info)
 
 print(" v."..info["version"])
 
-print("</br>User ")
-print('<a href="'..ntop.getHttpPrefix()..'/lua/admin/users.lua"><span class="label label-primary">'.._SESSION["user"].. '</span></a> Interface <a href="'..ntop.getHttpPrefix()..'/lua/if_stats.lua"><span class="label label-primary">')
+print("</br> ") print(i18n("please_wait_page.user")) print(" ")
+print('<a href="'..ntop.getHttpPrefix()..'/lua/admin/users.lua"><span class="label label-primary">'.._SESSION["user"].. '</span></a> ' .. i18n("interface") .. ' <a href="'..ntop.getHttpPrefix()..'/lua/if_stats.lua"><span class="label label-primary">')
 
-alias = getInterfaceNameAlias(ifname)
-
-if((alias ~= nil) and (alias ~= ifname)) then
-   print(alias)
-else
-   print(_ifstats.description)
-end
+local alias = getInterfaceNameAlias(ifname)
+print(alias)
 
 print('</span></a>')
+
+if have_nedge then
+  print[[<form id="powerOffForm" method="post">
+    <input name="csrf" value="]] print(ntop.getRandomCSRFValue()) print[[" type="hidden" />
+    <input name="poweroff" value="" type="hidden" />
+  </form>
+  <form id="rebootForm" method="post">
+    <input name="csrf" value="]] print(ntop.getRandomCSRFValue()) print[[" type="hidden" />
+    <input name="reboot" value="" type="hidden" />
+  </form>]]
+
+  print(
+    template.gen("modal_confirm_dialog.html", {
+      dialog={
+        id      = "poweroff_dialog",
+        action  = "$('#powerOffForm').submit()",
+        title   = i18n("nedge.power_off"),
+        message = i18n("nedge.power_off_confirm"),
+        confirm = i18n("nedge.power_off"),
+      }
+    })
+  )
+
+  print(
+    template.gen("modal_confirm_dialog.html", {
+      dialog={
+        id      = "reboot_dialog",
+        action  = "$('#rebootForm').submit()",
+        title   = i18n("nedge.reboot"),
+        message = i18n("nedge.reboot_corfirm"),
+        confirm = i18n("nedge.reboot"),
+      }
+    })
+  )
+end
 
 if(info["pro.systemid"] and (info["pro.systemid"] ~= "")) then
    local do_show = false
@@ -58,17 +79,17 @@ if(info["pro.systemid"] and (info["pro.systemid"] ~= "")) then
       if(info["pro.demo_ends_at"] ~= nil) then
 	 local rest = info["pro.demo_ends_at"] - os.time()
 	 if(rest > 0) then
-	    print(' License expires in '.. secondsToTime(rest) ..'')
+	    print(" " .. i18n("about.licence_expires_in", {time=secondsToTime(rest)}))
 	 end
       end
    else
-      print('Upgrade to Professional version')
+      print(i18n("about.upgrade_to_professional"))
       do_show = true
    end
    print('</span></A>')
 
    if(info["pro.out_of_maintenance"] == true) then
-      print('<span class="badge badge-error">ntopng maintenance is expired</span>')
+      print('<span class="badge badge-error">') print(i18n("about.maintenance_expired")) print('</span>')
    end
    
    if(do_show) then
@@ -81,10 +102,15 @@ print [[</font>
 </div> <!-- End column 1 -->
 	<div class="col-xs-4 v col-sm-4">
 	<div class="row">
-	 <div class="col-xs-6 col-sm-6">
 ]]
 
-if interface.isPcapDumpInterface() == false then
+if not have_nedge then
+  print[[	 <div class="col-xs-6 col-sm-6"> ]]
+else
+  print[[	 <div class="col-md-12"> ]]
+end
+
+if (interface.isPcapDumpInterface() == false) and (not have_nedge) then
    if(ifname ~= nil) then
      maxSpeed = getInterfaceSpeed(_ifstats)
    end
@@ -101,6 +127,7 @@ if interface.isPcapDumpInterface() == false then
       -- use the user-specified custom value for the speed
       maxSpeed = tonumber(maxSpeed)*1000000
    end
+
    addGauge('networkload', ntop.getHttpPrefix()..'/lua/if_stats.lua?ifid='..getInterfaceId(ifname).."&page=config", 100, 100, 50)
    print [[ <div class="text-center" title="All traffic detected by NTOP: Local2Local, Remote2Local, Local2Remote" id="gauge_text_allTraffic"></div> ]]
 
@@ -121,6 +148,19 @@ if interface.isPcapDumpInterface() == false then
 
 end -- closes interface.isPcapDumpInterface() == false 
 
+if have_nedge then
+   print [[  <a href="]]
+   print (ntop.getHttpPrefix())
+   print [[/lua/if_stats.lua">
+	    <table style="border-collapse:collapse; !important">
+	    <tr><td title="Upload"><i class="fa fa-cloud-upload"></i>&nbsp;</td><td class="network-load-chart-local2remote">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</td><td class="text-right" id="chart-local2remote-text"></td></tr>
+	    <tr><td title="Download"><i class="fa fa-cloud-download"></i>&nbsp;</td><td class="network-load-chart-remote2local">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</td><td class="text-right" id="chart-remote2local-text"></td></tr>
+	    </table>
+	    </div>
+	    <div class="col-xs-6 col-sm-4">
+	    </a>]]
+end
+
 print [[
       </div>
     </div>
@@ -133,16 +173,33 @@ print [[
 </div>
 </div>]]
 
+-- Bridge wizard check
+local show_bridge_dialog = false
+
+if isAdministrator()
+ and isBridgeInterface(_ifstats)
+ and ntop.isEnterprise()
+ and ((ntop.getCache(getBridgeInitializedKey(_ifstats.id)) ~= "1") or (_POST["show_wizard"] ~= nil)) then
+  show_bridge_dialog = true
+  dofile(dirs.installdir .. "/scripts/lua/inc/bridge_wizard.lua")
+end
 
 print[[<script>
 // Updating charts.
 ]]
 
+if show_bridge_dialog then
+  print("$('#bridgeWizardModal').modal();")
+  ntop.setCache(getBridgeInitializedKey(_ifstats.id), "1")
+end
+
+local traffic_peity_width = ternary(have_nedge, "140", "64")
+
 print('var is_historical = false;')
 print [[
 
-var updatingChart_local2remote = $(".network-load-chart-local2remote").peity("line", { width: 64, max: null });
-var updatingChart_remote2local = $(".network-load-chart-remote2local").peity("line", { width: 64, max: null, fill: "lightgreen"});
+var updatingChart_local2remote = $(".network-load-chart-local2remote").peity("line", { width: ]] print(traffic_peity_width) print[[, max: null });
+var updatingChart_remote2local = $(".network-load-chart-remote2local").peity("line", { width: ]] print(traffic_peity_width) print[[, max: null, fill: "lightgreen"});
 
 var prev_bytes   = 0;
 var prev_packets = 0;
@@ -173,6 +230,17 @@ print [[/lua/logout.lua");  }, */
               rsp.bytes   = rsp.a_to_b_out_bytes + rsp.b_to_a_out_bytes;
               rsp.packets = rsp.a_to_b_out_pkts + rsp.b_to_a_out_pkts;
             }
+]]
+
+if have_nedge then
+  -- Use bytes up / down on edge
+  print[[
+            rsp.local2remote = rsp.bytes_upload;
+            rsp.remote2local = rsp.bytes_download;
+  ]]
+end
+
+print[[
 
 	    if (prev_bytes > 0) {
 	      if (rsp.packets < prev_packets) {
@@ -217,10 +285,10 @@ print [[/lua/logout.lua");  }, */
                 }
 ]]
 
-   if interface.isPcapDumpInterface() == false then
+   if (interface.isPcapDumpInterface() == false) and (not have_nedge) then
       print[[
 
-		$('#gauge_text_allTraffic').html(bitsToSize(Math.min(bps, ]] print(maxSpeed) print[[), 1000) + " [" + addCommas(pps) + " pps]");
+		$('#gauge_text_allTraffic').html("<small>"+bitsToSize(Math.min(bps, ]] print(maxSpeed) print[[), 1000) + " [" + addCommas(pps) + " pps]</small>");
 		$('#chart-local2remote-text').html("&nbsp;"+bitsToSize(bps_local2remote, 1000));
 		$('#chart-remote2local-text').html("&nbsp;"+bitsToSize(bps_remote2local, 1000));
 		var v = Math.round(Math.min((bps*100)/]] print(maxSpeed) print[[, 100));
@@ -228,14 +296,18 @@ print [[/lua/logout.lua");  }, */
 		$('#networkload').html(v+"%");
 
 ]]
-
+   elseif have_nedge then
+     print[[
+		$('#chart-local2remote-text').html("&nbsp;"+bitsToSize(bps_local2remote, 1000));
+		$('#chart-remote2local-text').html("&nbsp;"+bitsToSize(bps_remote2local, 1000));
+     ]]
    end
 
 print[[
 }
 	      } /* closes if (prev_bytes > 0) */
 
-		var msg = "&nbsp;<i class=\"fa fa-clock-o\"></i> <small>"+rsp.localtime+" | Uptime: "+rsp.uptime+"</small>";
+		var msg = "&nbsp;<i class=\"fa fa-clock-o\"></i> <small>"+rsp.localtime+" | ]] print(i18n("about.uptime")) print[[: "+rsp.uptime+"</small>";
 
                 if(rsp.system_host_stats.mem_total !== undefined) {
                    var mem_total = rsp.system_host_stats.mem_total;
@@ -245,7 +317,7 @@ print[[
                    mem_used_ratio = mem_used_ratio * 100;
                    mem_used_ratio = Math.round(mem_used_ratio * 100) / 100;
                    mem_used_ratio = mem_used_ratio + "%";
-                   $('#ram-used').html('used: ' + mem_used_ratio + ' / available: ' + bytesToSize((mem_total - mem_used) * 1024) + ' / total: ' + bytesToSize(mem_total * 1024));
+                   $('#ram-used').html('Used: ' + mem_used_ratio + ' / Available: ' + bytesToSize((mem_total - mem_used) * 1024) + ' / Total: ' + bytesToSize(mem_total * 1024));
                 }
 
                 if(rsp.system_host_stats.cpu_load !== undefined) {
@@ -274,13 +346,9 @@ print[[
 
 		   msg += "&nbsp;<a href=\"]]
 print (ntop.getHttpPrefix())
-print [[/lua/show_alerts.lua\"><i class=\"fa fa-warning\" style=\"color: " + color + ";\"></i>"
+print [[/lua/show_alerts.lua\">"
 
-                   msg += "&nbsp;<span class=\"label " + label + "\">"+addCommas(rsp.engaged_alerts)+" Engaged Alert";
-                   if(rsp.engaged_alerts > 1) msg += "s";
-                   msg += "</span>";
-
-                   msg += "</A>&nbsp;"
+                   msg += "&nbsp;<span class=\"label " + label + "\">"+addCommas(rsp.engaged_alerts)+" <i class=\"fa fa-warning\"></i></span></A>"
                 }
 
 		if((rsp.engaged_alerts > 0 || rsp.alerts_stored == true) && $("#alerts-id").is(":visible") == false) {
@@ -289,11 +357,21 @@ print [[/lua/show_alerts.lua\"><i class=\"fa fa-warning\" style=\"color: " + col
 
 		var alarm_threshold_low = 60;  /* 60% */
 		var alarm_threshold_high = 90; /* 90% */
-		var alert = 0;    
-            
-            msg += "<a style=\"margin-left:0.5em;\" href=\"]]
+		var alert = 0;     
+
+		if(rsp.num_local_hosts > 0) {
+		  msg += "<a style=\"margin-left:0.5em;\" href=\"]]
 print (ntop.getHttpPrefix())
-print [[/lua/hosts_stats.lua\">";
+print [[/lua/hosts_stats.lua?mode=local\">";
+
+		  msg += "<span class=\"label label-success\">";
+		  msg += addCommas(rsp.num_local_hosts)+" <i class=\"fa fa-laptop\" aria-hidden=\"true\"></i></span></a> ";
+		}
+
+	    msg += "<a href=\"]]
+print (ntop.getHttpPrefix())
+print [[/lua/hosts_stats.lua?mode=remote\">";
+
 		if(rsp.hosts_pctg < alarm_threshold_low) {
 		  msg += "<span class=\"label label-default\">";
 		} else if(rsp.hosts_pctg < alarm_threshold_high) {
@@ -304,11 +382,11 @@ print [[/lua/hosts_stats.lua\">";
 		  msg += "<span class=\"label label-danger\">";
 		}
 
-		msg += addCommas(rsp.num_hosts)+" Hosts</span></a> ";
+		msg += addCommas(rsp.num_hosts-rsp.num_local_hosts)+" <i class=\"fa fa-laptop\" aria-hidden=\"true\"></i></span></a> ";
 
             msg += "<a href=\"]]
 print (ntop.getHttpPrefix())
-print [[/lua/mac_stats.lua\">";
+print [[/lua/macs_stats.lua?devices_mode=host_macs_only\">";
 		  msg += "<span class=\"label label-default\">";
 		msg += addCommas(rsp.num_devices)+" Devices</span></a> ";
 
@@ -364,7 +442,18 @@ print [[/lua/logout.lua");  */
 }
 
 footerRefresh();  /* call immediately to give the UI a more responsive look */
-setInterval(footerRefresh, ]] print(getInterfaceRefreshRate(_ifstats.id).."") print[[ * 1000);  /* re-schedule every [interface-rate] seconds */
+setInterval(footerRefresh, ]]
+
+local footer_refresh_rate
+
+if have_nedge then
+  footer_refresh_rate = 5
+else
+  footer_refresh_rate = getInterfaceRefreshRate(_ifstats.id)
+end
+
+print(footer_refresh_rate.."")
+print[[ * 1000);  /* re-schedule every [interface-rate] seconds */
 
 //Enable tooltip without a fixer placement
 $(document).ready(function () { $("[rel='tooltip']").tooltip(); });
@@ -389,15 +478,6 @@ $(document).ready(function(){
 
 ]]
 
--- Bridge wizard check
-if isAdministrator()
- and isBridgeInterface(_ifstats)
- and ntop.isEnterprise()
- and (ntop.getCache(getBridgeInitializedKey()) ~= "1") then
-  print("$('#bridgeWizardModal').modal();")
-  ntop.setCache(getBridgeInitializedKey(), "1")
-end
-
 -- This code rewrites the current page state after a POST request to avoid Document Expired errors
 if not table.empty(_POST) then
   print[[
@@ -408,11 +488,40 @@ if not table.empty(_POST) then
   ]]
 end
 
+-- Update check
+local latest_version = ntop.getCache("ntopng.cache.version")
+
+latest_version = trimSpace(string.gsub(latest_version, "\n", ""))
+
+if isEmptyString(latest_version) then
+  print[[
+  $.ajax({
+      type: 'GET',
+        url: ']]
+print (ntop.getHttpPrefix())
+print [[/lua/check_update.lua',
+        data: {},
+        success: function(rsp) {
+          if(rsp && rsp.msg)
+            $("#ntopng_update_available").html(rsp.msg);
+        }
+    });
+  ]]
+else
+  local msg = get_version_update_msg(info, latest_version)
+
+  if not isEmptyString(msg) then
+    print[[
+      $("#ntopng_update_available").html("]] print(msg) print[[");
+    ]]
+  end
+end
+
 print[[
 
 // hide the possibly shown alerts icon in the header
 ]]
-if ntop.getPrefs().are_alerts_enabled == false then
+if not _ifstats.isView or ntop.getPrefs().are_alerts_enabled == false then
    print("$('#alerts-li').hide();")
 else
    print("$('#alerts-li').show();")

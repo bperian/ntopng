@@ -2,11 +2,13 @@
 -- (C) 2013-17 - ntop.org
 --
 
-dirs = ntop.getDirs()
+local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 require "lua_utils"
 local host_pools_utils = require "host_pools_utils"
+
+local have_nedge = ntop.isnEdge()
 
 sendHTTPContentTypeHeader('text/html')
 
@@ -45,10 +47,6 @@ dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
 prefs = ntop.getPrefs()
 
 ifstats = interface.getStats()
-
-print [[
-      <hr>
-]]
 
 if (_GET["page"] ~= "historical") then
 if(asn ~= nil) then
@@ -114,6 +112,7 @@ else
 end
 
 print [[
+      <hr>
       <div id="table-hosts"></div>
 	 <script>
 	 var url_update = "]] print(getPageUrl(ntop.getHttpPrefix() .. "/lua/get_hosts_data.lua", page_params)) print[[";]]
@@ -123,7 +122,6 @@ ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/hosts_stats_id.inc")
 if ((ifstats.vlan)) then show_vlan = true else show_vlan = false end
 
 -- Set the host table option
-if(prefs.is_categorization_enabled) then print ('host_rows_option["categorization"] = true;\n') end
 if(prefs.is_httpbl_enabled) then print ('host_rows_option["httpbl"] = true;\n') end
 if(show_vlan) then print ('host_rows_option["vlan"] = true;\n') end
 
@@ -137,7 +135,10 @@ print [[
 if(protocol == nil) then protocol = "" end
 
 if(asn ~= nil) then 
-	asninfo = " " .. i18n("hosts_stats.asn_title",{asn=asn})
+	asninfo = " " .. i18n("hosts_stats.asn_title",{asn=asn}) ..
+      "<small>&nbsp;<i class='fa fa-info-circle fa-sm' aria-hidden='true'></i> <A HREF='https://stat.ripe.net/AS"..
+      asn .. "'><i class='fa fa-external-link fa-sm' title='".. i18n("hosts_stats.more_info_about_as_popup_msg") ..
+      "'></i></A></small>"
 end
 
 if(_GET["country"] ~= nil) then 
@@ -153,7 +154,28 @@ if(_GET["os"] ~= nil) then
 end
 
 if(_GET["pool"] ~= nil) then
-   pool_ = " "..i18n("hosts_stats.pool_title",{poolname=host_pools_utils.getPoolName(ifstats.id, _GET["pool"])})
+   local rrdbase = host_pools_utils.getRRDBase(ifstats.id, _GET["pool"])
+   local charts_available = ntop.exists(rrdbase.."/bytes.rrd")
+   local pool_edit = ""
+
+   -- TODO enable on nEdge when devices list will be implemented
+   if (_GET["pool"] ~= host_pools_utils.DEFAULT_POOL_ID) and (not have_nedge) then
+      local pool_link
+
+      if have_nedge then
+         pool_link = "/lua/pro/nedge/admin/nf_edit_user.lua?username=" .. host_pools_utils.poolIdToUsername(_GET["pool"]) .. "&page=devices"
+      else
+         pool_link = "/lua/if_stats.lua?page=pools&pool=".._GET["pool"]
+      end
+
+      pool_edit = "&nbsp; <A HREF='"..ntop.getHttpPrefix()..pool_link.."'><i class='fa fa-cog fa-sm' title='"..i18n("host_pools.manage_pools") .. "'></i></A>"
+   end
+
+   pool_ = " "..i18n(ternary(have_nedge, "hosts_stats.user_title", "hosts_stats.pool_title"),
+		     {poolname=host_pools_utils.getPoolName(ifstats.id, _GET["pool"])})
+      .."<small>".. pool_edit ..
+      ternary(charts_available, "&nbsp; <A HREF='"..ntop.getHttpPrefix().."/lua/pool_details.lua?page=historical&pool=".._GET["pool"].."'><i class='fa fa-area-chart fa-sm' title='"..i18n("chart") .. "'></i></A>", "")..
+      "</small>"
 end
 
 if(_GET["vlan"] ~= nil) then
@@ -169,23 +191,39 @@ end
 if(protocol_name == nil) then protocol_name = protocol end
 
 function getPageTitle()
-   local parts = {}
+   local mode_label = ""
 
-   -- Note: when a parameter is nil, it will be not added to the parts
-   parts[#parts + 1] = firstToUpper(mode or "All")
-   parts[#parts + 1] = protocol_name
-   parts[#parts + 1] = network_name
-   parts[#parts + 1] = ipver_title
-   parts[#parts + 1] = os_
-   parts[#parts + 1] = i18n("hosts_stats.hosts")
-   parts[#parts + 1] = country or asninfo or mac or pool_
-   parts[#parts + 1] = vlan_title
+   if mode == "remote" then
+      mode_label = i18n("hosts_stats.remote")
+   elseif mode == "local" then
+      mode_label = i18n("hosts_stats.local")
+   elseif mode == "filtered" then
+      mode_label = i18n("hosts_stats.filtered")
+   elseif mode == "blacklisted" then
+      mode_label = i18n("hosts_stats.blacklisted")
+   end
 
-   return table.concat(parts, " ")
+   -- Note: we must use the empty string as fallback. Multiple spaces will be collapsed into one automatically.
+   return i18n("hosts_stats.hosts_page_title", {
+      all = isEmptyString(mode_label) and i18n("hosts_stats.all") or "",
+      local_remote = mode_label,
+      protocol = protocol_name or "",
+      network = not isEmptyString(network_name) and i18n("hosts_stats.in_network", {network=network_name}) or "",
+      ip_version = ipver_title or "",
+      ["os"] = os_ or "",
+      country_asn_or_mac = country or asninfo or mac or pool_ or "",
+      vlan = vlan_title or "",
+   })
 end
 
 print('title: "'..getPageTitle()..'",\n')
 print ('rowCallback: function ( row ) { return host_table_setID(row); },')
+
+print [[
+       tableCallback: function()  { $("#dt-bottom-details > .pull-left > p").first().append('. ]]
+print(i18n('hosts_stats.idle_hosts_not_listed'))
+print[['); },
+]]
 
 -- Set the preference table
 preference = tablePreferences("rows_number",_GET["perPage"])
@@ -209,6 +247,13 @@ print [[    showPagination: true, ]]
    print[['<div class="btn-group pull-right">]]
    printIpVersionDropdown(base_url, page_params)
    print[[</div>']]
+
+   -- VLAN selector
+   if ifstats.vlan then
+      print[[, '<div class="btn-group pull-right">]]
+      printVLANFilterDropdown(base_url, page_params)
+      print[[</div>']]
+   end
 
    -- Hosts filter
    local hosts_filter_params = table.clone(page_params)
@@ -234,6 +279,22 @@ print [[    showPagination: true, ]]
    print (getPageUrl(base_url, hosts_filter_params))
    print ('">'..i18n("hosts_stats.remote_hosts_only")..'</a></li>')
 
+   hosts_filter_params.mode = "blacklisted"
+   print('<li')
+   if mode == hosts_filter_params.mode then print(' class="active"') end
+   print('><a href="')
+   print (getPageUrl(base_url, hosts_filter_params))
+   print ('">'..i18n("hosts_stats.blacklisted_hosts_only")..'</a></li>')
+
+   if isBridgeInterface(ifstats) then
+     hosts_filter_params.mode = "filtered"
+     print('<li')
+     if mode == hosts_filter_params.mode then print(' class="active"') end
+     print('><a href="')
+     print (getPageUrl(base_url, hosts_filter_params))
+     print ('">'..i18n("hosts_stats.filtered_hosts_only")..'</a></li>')
+   end
+
    -- Host pools
    if not ifstats.isView then
       hosts_filter_params.mode = nil
@@ -243,7 +304,9 @@ print [[    showPagination: true, ]]
         hosts_filter_params.pool = _pool.id
         print('<li')
         if pool == _pool.id then print(' class="active"') end
-        print('><a href="'..getPageUrl(base_url, hosts_filter_params)..'">'..i18n("hosts_stats.host_pool",{pool_name=_pool.name}) ..'</li>')
+        print('><a href="'..getPageUrl(base_url, hosts_filter_params)..'">'
+		 ..i18n(ternary(have_nedge, "hosts_stats.user", "hosts_stats.host_pool"),
+			{pool_name=string.gsub(_pool.name, "'", "\\'")}) ..'</li>')
       end
    end
 
@@ -258,17 +321,23 @@ print [[
          			field: "key",
          			hidden: true,
          			css: {
-              textAlign: 'center'
-           }
-         		},
-         		{
+                                  textAlign: 'center'
+                                }
+         		},{
+			     title: "",
+				 field: "column_info",
+				 sortable: false,
+	 	             css: {
+			        textAlign: 'center'
+			     }
+         		},{
 			     title: "]] print(i18n("ip_address")) print[[",
 				 field: "column_ip",
 				 sortable: true,
 	 	             css: {
 			        textAlign: 'left'
 			     }
-				 },
+                        },
 			  ]]
 
 if(show_vlan) then
@@ -310,25 +379,49 @@ print [[
 			        textAlign: 'center'
 			     }
 
-				 },			     
-]]
-
-ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/hosts_stats_top.inc")
-
-print [[
-
-			     {
-			     title: "]] print(i18n("asn")) print[[",
-				 field: "column_asn",
+				 },  {
+			     title: "]] print(i18n("if_stats_overview.dropped_flows")) print[[",
+				 field: "column_num_dropped_flows",
 				 sortable: true,
+                                 hidden: ]]
+if isBridgeInterface(ifstats) then
+   print("false")
+else
+   print("true")
+end
+print[[,
 	 	             css: { 
 			        textAlign: 'center'
 			     }
 
+				 },  {
+			     title: "]] print(i18n("show_alerts.alerts")) print[[",
+				 field: "column_alerts",
+				 sortable: true,
+	 	             css: {
+			        textAlign: 'center'
+			     }
+
+				 },
+			     {
+			     title: "]] print(i18n("name")) print[[",
+				 field: "column_name",
+				 sortable: true,
+	 	             css: {
+			        textAlign: 'left'
+			     }
+
+				 },
+			     {
+			     title: "]] print(i18n("seen_since")) print[[",
+				 field: "column_since",
+				 sortable: true,
+	 	             css: { 
+			        textAlign: 'center'
+			     }
 				 },
 
 ]]
-
 
 if(prefs.is_httpbl_enabled) then
 print [[
@@ -343,8 +436,39 @@ print [[
 		       ]]
 end
 
+print [[
+			     {
+			     title: "]] print(i18n("breakdown")) print[[",
+				 field: "column_breakdown",
+				 sortable: false,
+	 	             css: {
+			        textAlign: 'center'
+			     }
+				 },
+			     {
+			     title: "]] print(i18n("throughput")) print[[",
+				 field: "column_thpt",
+				 sortable: true,
+	 	             css: { 
+			        textAlign: 'right'
+			     }
+				 },
+			     {
+			     title: "]] print(i18n("traffic")) print[[",
+				 field: "column_traffic",
+				 sortable: true,
+	 	             css: { 
+			        textAlign: 'right'
+			     }
+				 }
+			     ]
+	       });
 
-ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/hosts_stats_bottom.inc")
+
+       </script>
+
+]]
+
 
 if(asn ~= nil) then
 print [[
@@ -374,17 +498,6 @@ print [[
 </div>
 ]]
 
-if(asn ~= nil and asn ~= "0") then
-   -- direct html is not allowed in the title so we must place the link using javascript
-   -- using datatable method tableCallback gives strange effects such as a quick blink of the link
-   print[[
-<script type="text/javascript">
-
-          $('h2:contains("for AS")').append("<small>&nbsp;<i class=\"fa fa-info-circle fa-sm\" aria-hidden=\"true\"></i> <A HREF=\"https://stat.ripe.net/AS]] print(asn) print[[\"><i class=\"fa fa-external-link fa-sm\" title=\"]] print(i18n("hosts_stats.more_info_about_as_popup_msg")) print(asn) print[[\"></i></A></small>");
-
-</script>
-]]
-end
 end -- if(asn ~= nil)
 else
    -- historical page
@@ -420,6 +533,21 @@ else
 
    if asn ~= nil then
       drawRRD(ifstats.id, 'asn:'..asn, rrdfile, _GET["zoom"], base_url.."?asn="..asn.."&page=historical", 1, _GET["epoch"])
+      print[[
+
+<br>
+
+<div>
+  <b>]] print(i18n('notes')) print[[</b>
+  <ul>
+    <li>]] print(i18n('graphs.note_ases_traffic')) print[[</li>
+    <li>]] print(i18n('graphs.note_ases_sent')) print[[</li>
+    <li>]] print(i18n('graphs.note_ases_rcvd')) print[[</li>
+  </ul>
+</div>
+
+]]
+
    elseif vlan ~= nil then
       drawRRD(ifstats.id, 'vlan:'..vlan, rrdfile, _GET["zoom"], base_url.."?vlan="..vlan.."&page=historical", 1, _GET["epoch"])
    end

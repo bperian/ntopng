@@ -8,300 +8,47 @@
 local verbose = false
 local prefs = ntop.getPrefs()
 local info = ntop.getInfo()
+local menu_subpages = require "prefs_menu"
 show_advanced_prefs_key = "ntopng.prefs.show_advanced_prefs"
+local have_nedge = ntop.isnEdge()
+local skip_redis = false
 
-local function hasBridgeInterfaces()
-  local curif = ifname
-  local ifnames = interface.getIfNames()
-  local found = false
+-- ############################################
 
-  for _,ifname in pairs(ifnames) do
-    interface.select(ifname)
+--
+-- A menu is a list of menu entries
+-- A menu entry is composed by the following fields:
+--    - id: the subpage id
+--    - label: a label to be shown into the menu
+--    - entries: a list subpages (see belo)
+--
+-- The following optional fields can be specified
+--
+--    - advanced: if true, it should be only shown when advanced settings are enabled
+--    - pro_only: if true, it should be only shown in ntopng pro version
+--    - enterprise_only: if true, it should be only shown in ntopng enterprise version
+--    - disabled: if true, the entry is hidden
+--
+-- A subpage is composed by the following fields:
+--    - title: the subpage title
+--    - description: the subpage description
+--    - hidden: (optional) if true, this subpage is hidden
+--
 
-    local ifstats = interface.getStats()
-    if isBridgeInterface(ifstats) then
-      found = true
-      break
-    end
-  end
+-- ############################################
 
-  interface.select(curif)
-  return found
-end
-
-function hasNagiosSupport()
-   return prefs.nagios_nsca_host ~= nil
-end
-
-function hasAlertsDisabled()
-  return (prefs.has_cmdl_disable_alerts == true) or
-      ((_POST["disable_alerts_generation"] ~= nil) and (_POST["disable_alerts_generation"] == "1")) or
-      ((_POST["disable_alerts_generation"] == nil) and (ntop.getPref("ntopng.prefs.disable_alerts_generation") == "1"))
-end
-
--- This table is used both to control access to the preferences and to filter preferences results
-menu_subpages = {
-  {id="auth",          label=i18n("prefs.user_authentication"),  advanced=false, pro_only=true,   disabled=false, entries={
-    multiple_ldap_authentication = {
-      title       = i18n("prefs.multiple_ldap_authentication_title"),
-      description = i18n("prefs.multiple_ldap_authentication_description"),
-    }, multiple_ldap_account_type = {
-      title       = i18n("prefs.multiple_ldap_account_type_title"),
-      description = i18n("prefs.multiple_ldap_account_type_description"),
-    }, ldap_server_address = {
-      title       = i18n("prefs.ldap_server_address_title"),
-      description = i18n("prefs.ldap_server_address_description"),
-    }, bind_dn = {
-      title       = i18n("prefs.bind_dn_title"),
-      description = i18n("prefs.bind_dn_description"),
-    }, bind_pwd = {
-      title       = i18n("prefs.bind_pwd_title"),
-      description = i18n("prefs.bind_pwd_description"),
-    }, search_path = {
-      title       = i18n("prefs.search_path_title"),
-      description = i18n("prefs.search_path_description"),
-    }, user_group = {
-      title       = i18n("prefs.user_group_title"),
-      description = i18n("prefs.user_group_description"),
-    }, admin_group = {
-      title       = i18n("prefs.admin_group_title"),
-      description = i18n("prefs.admin_group_description"),
-    }, toggle_ldap_anonymous_bind = {
-      title       = i18n("prefs.toggle_ldap_anonymous_bind_title"),
-      description = i18n("prefs.toggle_ldap_anonymous_bind_description"),
-    },
-  }}, {id="ifaces",    label=i18n("prefs.network_interfaces"),   advanced=true,  pro_only=false,  disabled=false, entries={
-    dynamic_iface_vlan_creation = {
-      title       = i18n("prefs.dynamic_iface_vlan_creation_title"),
-      description = i18n("prefs.dynamic_iface_vlan_creation_description"),
-    }, dynamic_flow_collection = {
-      title       = i18n("prefs.dynamic_flow_collection_title"),
-      description = i18n("prefs.dynamic_flow_collection_description"),
-    },
-  }}, {id="in_memory",     label=i18n("prefs.cache_settings"),             advanced=true,  pro_only=false,  disabled=false, entries={
-    local_host_max_idle = {
-      title       = i18n("prefs.local_host_max_idle_title"),
-      description = i18n("prefs.local_host_max_idle_description"),
-    }, non_local_host_max_idle = {
-      title       = i18n("prefs.non_local_host_max_idle_title"),
-      description = i18n("prefs.non_local_host_max_idle_description"),
-    }, flow_max_idle = {
-      title       = i18n("prefs.flow_max_idle_title"),
-      description = i18n("prefs.flow_max_idle_description"),
-    }, housekeeping_frequency = {
-      title       = i18n("prefs.housekeeping_frequency_title"),
-      description = i18n("prefs.housekeeping_frequency_description"),
-    }, toggle_local_host_cache_enabled = {
-      title       = i18n("prefs.toggle_local_host_cache_enabled_title"),
-      description = i18n("prefs.toggle_local_host_cache_enabled_description"),
-    }, toggle_active_local_host_cache_enabled = {
-      title       = i18n("prefs.toggle_active_local_host_cache_enabled_title"),
-      description = i18n("prefs.toggle_active_local_host_cache_enabled_description"),
-    }, active_local_host_cache_interval = {
-      title       = i18n("prefs.active_local_host_cache_interval_title"),
-      description = i18n("prefs.active_local_host_cache_interval_description"),
-    }, local_host_cache_duration = {
-      title       = i18n("prefs.local_host_cache_duration_title"),
-      description = i18n("prefs.local_host_cache_duration_description"),
-    },
-  }}, {id="on_disk_ts",    label=i18n("prefs.data_retention"),       advanced=false, pro_only=false,  disabled=false, entries={
-    toggle_local = {
-      title       = i18n("prefs.toggle_local_title"),
-      description = i18n("prefs.toggle_local_description"),
-    }, toggle_local_ndpi = {
-      title       = i18n("prefs.toggle_local_ndpi_title"),
-      description = i18n("prefs.toggle_local_ndpi_description"),
-    }, toggle_flow_rrds = {
-      title       = i18n("prefs.toggle_flow_rrds_title"),
-      description = i18n("prefs.toggle_flow_rrds_description"),
-    }, toggle_pools_rrds = {
-      title       = i18n("prefs.toggle_pools_rrds_title"),
-      description = i18n("prefs.toggle_pools_rrds_description"),
-    }, toggle_vlan_rrds = {
-      title       = i18n("prefs.toggle_vlan_rrds_title"),
-      description = i18n("prefs.toggle_vlan_rrds_description"),
-    }, toggle_asn_rrds = {
-      title       = i18n("prefs.toggle_asn_rrds_title"),
-      description = i18n("prefs.toggle_asn_rrds_description"),
-    }, toggle_tcp_flags_rrds = {
-      title       = i18n("prefs.toggle_tcp_flags_rrds_title"),
-      description = i18n("prefs.toggle_tcp_flags_rrds_description"),
-    }, toggle_tcp_retr_ooo_lost_rrds = {
-      title       = i18n("prefs.toggle_tcp_retr_ooo_lost_rrds_title"),
-      description = i18n("prefs.toggle_tcp_retr_ooo_lost_rrds_description"),
-    }, toggle_local_categorization = {
-      title       = i18n("prefs.toggle_local_categorization_title"),
-      description = i18n("prefs.toggle_local_categorization_description"),
-    }, minute_top_talkers_retention = {
-      title       = i18n("prefs.minute_top_talkers_retention_title"),
-      description = i18n("prefs.minute_top_talkers_retention_description"),
-    }, mysql_retention = {
-      title       = i18n("prefs.mysql_retention_title"),
-      description = i18n("prefs.mysql_retention_description"),
-      hidden      = (prefs.is_dump_flows_to_mysql_enabled == false),
-    }
-  }}, {id="alerts",        label=i18n("show_alerts.alerts"),               advanced=false, pro_only=false,  disabled=(prefs.has_cmdl_disable_alerts == true), entries={
-    disable_alerts_generation = {
-      title       = i18n("prefs.disable_alerts_generation_title"),
-      description = i18n("prefs.disable_alerts_generation_description"),
-    }, toggle_flow_alerts_iface = {
-      title       = i18n("prefs.toggle_flow_alerts_iface_title"),
-      description = i18n("prefs.toggle_flow_alerts_iface_description"),
-    }, toggle_alert_probing = {
-      title       = i18n("prefs.toggle_alert_probing_title"),
-      description = i18n("prefs.toggle_alert_probing_description"),
-    }, toggle_ssl_alerts = {
-      title       = i18n("prefs.toggle_ssl_alerts_title"),
-      description = i18n("prefs.toggle_ssl_alerts_description"),
-    }, toggle_malware_probing = {
-      title       = i18n("prefs.toggle_malware_probing_title"),
-      description = i18n("prefs.toggle_malware_probing_description", {url="https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt"}),
-    }, max_num_alerts_per_entity = {
-      title       = i18n("prefs.max_num_alerts_per_entity_title"),
-      description = i18n("prefs.max_num_alerts_per_entity_description"),
-    }, max_num_flow_alerts = {
-      title       = i18n("prefs.max_num_flow_alerts_title"),
-      description = i18n("prefs.max_num_flow_alerts_description"),
-    }, toggle_mysql_check_open_files_limit = {
-      title       = i18n("prefs.toggle_mysql_check_open_files_limit_title"),
-      description = i18n("prefs.toggle_mysql_check_open_files_limit_description"),
-      hidden      = (prefs.is_dump_flows_to_mysql_enabled == false),
-    }
-    
-  }}, {id="ext_alerts",    label=i18n("prefs.external_alerts"), advanced=false, pro_only=false,  disabled=hasAlertsDisabled(), entries={
-    toggle_alert_syslog = {
-      title       = i18n("prefs.toggle_alert_syslog_title"),
-      description = i18n("prefs.toggle_alert_syslog_description"),
-    }, toggle_slack_notification = {
-      title       = i18n("prefs.toggle_slack_notification_title", {url="http://www.slack.com"}),
-      description = i18n("prefs.toggle_slack_notification_description", {url="https://github.com/ntop/ntopng/blob/dev/doc/README.slack"}),
-    }, slack_notification_severity_preference = {
-      title       = i18n("prefs.slack_notification_severity_preference_title", {url="http://www.slack.com"}),
-      description = i18n("prefs.slack_notification_severity_preference_description"),
-    }, sender_username = {
-      title       = i18n("prefs.sender_username_title"),
-      description = i18n("prefs.sender_username_description"),
-    }, slack_webhook = {
-      title       = i18n("prefs.slack_webhook_title"),
-      description = i18n("prefs.slack_webhook_description"),
-    },
-  }}, {id="protocols",     label=i18n("prefs.protocols"),            advanced=false, pro_only=false,  disabled=false, entries={
-    toggle_top_sites = {
-      title       = i18n("prefs.toggle_top_sites_title"),
-      description = i18n("prefs.toggle_top_sites_description", {url="https://resources.sei.cmu.edu/asset_files/Presentation/2010_017_001_49763.pdf"}),
-    },
-  }}, {id="logging",       label=i18n("prefs.logging"),              advanced=false, pro_only=false,  disabled=(prefs.has_cmdl_trace_lvl == true), entries={
-    toggle_logging_level = {
-      title       = i18n("prefs.toggle_logging_level_title"),
-      description = i18n("prefs.toggle_logging_level_description"),
-    }, toggle_access_log = {
-      title       = i18n("prefs.toggle_access_log_title"),
-      description = i18n("prefs.toggle_access_log_description"),
-    },
-  }}, {id="flow_db_dump",  label=i18n("prefs.flow_database_dump"),   advanced=true,  pro_only=false,  disabled=(prefs.is_dump_flows_enabled == false), entries={
-    toggle_flow_db_dump_export = {
-      title       = i18n("prefs.toggle_flow_db_dump_export_title"),
-      description = i18n("prefs.toggle_flow_db_dump_export_description"),
-    }, max_num_packets_per_tiny_flow = {
-      title       = i18n("prefs.max_num_packets_per_tiny_flow_title"),
-      description = i18n("prefs.max_num_packets_per_tiny_flow_description"),
-    }, max_num_bytes_per_tiny_flow = {
-      title       = i18n("prefs.max_num_bytes_per_tiny_flow_title"),
-      description = i18n("prefs.max_num_bytes_per_tiny_flow_description"),
-    },
-  }}, {id="snmp",          label=i18n("prefs.snmp"),                 advanced=true,  pro_only=true,   disabled=false, entries={
-    toggle_snmp_rrds = {
-      title       = i18n("prefs.toggle_snmp_rrds_title"),
-      description = i18n("prefs.toggle_snmp_rrds_description"),
-    }, default_snmp_community = {
-      title       = i18n("prefs.default_snmp_community_title"),
-      description = i18n("prefs.default_snmp_community_description"),
-    },
-  }}, {id="nbox",          label=i18n("prefs.nbox_integration"),     advanced=true,  pro_only=true,   disabled=false, entries={
-    toggle_nbox_integration = {
-      title       = i18n("prefs.toggle_nbox_integration_title"),
-      description = i18n("prefs.toggle_nbox_integration_description"),
-    }, nbox_user = {
-      title       = i18n("prefs.nbox_user_title"),
-      description = i18n("prefs.nbox_user_description"),
-    }, nbox_password = {
-      title       = i18n("prefs.nbox_password_title"),
-      description = i18n("prefs.nbox_password_description"),
-    },
-  }}, {id="misc",          label=i18n("prefs.misc"),                 advanced=false, pro_only=false,  disabled=false, entries={
-    toggle_autologout = {
-      title       = i18n("prefs.toggle_autologout_title"),
-      description = i18n("prefs.toggle_autologout_description"),
-    }, google_apis_browser_key = {
-      title       = i18n("prefs.google_apis_browser_key_title"),
-      description = i18n("prefs.google_apis_browser_key_description", {url="https://maps-apis.googleblog.com/2016/06/building-for-scale-updates-to-google.html"}),
-    }, toggle_thpt_content = {
-      title       = i18n("prefs.toggle_thpt_content_title"),
-      description = i18n("prefs.toggle_thpt_content_description"),
-    }, toggle_host_mask = {
-      title       = i18n("prefs.toggle_host_mask_title"),
-      description = i18n("prefs.toggle_host_mask_description"),
-    }
-  }}, {id="bridging",      label=i18n("prefs.traffic_bridging"),     advanced=false,  pro_only=true,   enterprise_only=true, disabled=(not hasBridgeInterfaces()), entries={
-    safe_search_dns = {
-      title       = i18n("prefs.safe_search_dns_title"),
-      description = i18n("prefs.safe_search_dns_description", {url="https://en.wikipedia.org/wiki/SafeSearch"}),
-    }, global_dns = {
-      title       = i18n("prefs.global_dns_title"),
-      description = i18n("prefs.global_dns_description"),
-    }, secondary_dns = {
-      title       = i18n("prefs.secondary_dns_title"),
-      description = i18n("prefs.secondary_dns_description"),
-    }, featured_dns = {
-      title       = i18n("prefs.featured_dns_title"),
-      description = i18n("prefs.featured_dns_description"),
-    }, toggle_shaping_directions = {
-      title       = i18n("prefs.toggle_shaping_directions_title"),
-      description = i18n("prefs.toggle_shaping_directions_description"),
-    }, toggle_captive_portal = {
-      title       = i18n("prefs.toggle_captive_portal_title"),
-      description = i18n("prefs.toggle_captive_portal_description"),
-    }, captive_portal_url = {
-      title       = i18n("prefs.captive_portal_url_title"),
-      description = i18n("prefs.captive_portal_url_description"),
-    }
-  }},
+DNS_PRESETS = {
+  {id="comodo_secure", label="Comodo Secure DNS", url="https://www.comodo.com/secure-dns/", primary_dns="8.26.56.26", secondary_dns="8.20.247.20"},
+  {id="dyn_internet_guide", label="Dyn Internet Guide", url="http://dyn.com/labs/dyn-internet-guide/", primary_dns="216.146.35.35", secondary_dns="216.146.36.36"},
+  --{id="fool_dns", label="FoolDNS", url="http://www.fooldns.com/fooldns-community/english-version/", primary_dns="87.118.111.215", secondary_dns="213.187.11.62"},
+  --{id="greenteam_internet", label="GreenTeam Internet", url="http://members.greentm.co.uk/", primary_dns="81.218.119.11", secondary_dns="209.88.198.133"},
+  {id="opendns", label="OpenDNS", url="https://www.opendns.com/", primary_dns="208.67.222.222", secondary_dns="208.67.220.220"},
+  {id="opendns_familyshield", label="OpenDNS - FamilyShield", url="https://www.opendns.com/setupguide/?url=familyshield", primary_dns="208.67.222.123", secondary_dns="208.67.220.123", child_safe=true},
+  {id="norton_connectsafe", label="Norton ConnectSafe: Security", url="https://dns.norton.com/configureRouter.html", primary_dns="199.85.126.10", secondary_dns="199.85.127.10"},
+  {id="norton_security_pornography", label="Norton ConnectSafe: Security + Pornography", url="https://dns.norton.com/", primary_dns="199.85.126.20", secondary_dns="199.85.127.20", child_safe=true},
+  {id="norton_security_other", label="Norton ConnectSafe: Security + Other", url="https://dns.norton.com/", primary_dns="199.85.126.30", secondary_dns="199.85.127.30"},
+  {id="quad9_security", label="Quad 9: Security", url="https://quad9.net", primary_dns="9.9.9.9", secondary_dns=""},
 }
-
--- Add nagios configuration (if available)
--- Presently, nagios is not available under windows
-if hasNagiosSupport() then
-   for _, i in pairs(menu_subpages) do
-      if i["id"] == "ext_alerts" then
-	 local nagios = {
-	    toggle_alert_nagios = {
-	       title       = i18n("prefs.toggle_alert_nagios_title"),
-	       description = i18n("prefs.toggle_alert_nagios_description"),
-	    }, nagios_nsca_host = {
-	       title       = i18n("prefs.nagios_nsca_host_title"),
-	       description = i18n("prefs.nagios_nsca_host_description"),
-	    }, nagios_nsca_port = {
-	       title       = i18n("prefs.nagios_nsca_port_title"),
-	       description = i18n("prefs.nagios_nsca_port_description"),
-	    }, nagios_send_nsca_executable = {
-	       title       = i18n("prefs.nagios_send_nsca_executable_title"),
-	       description = i18n("prefs.nagios_send_nsca_executable_description"),
-	    }, nagios_send_nsca_config = {
-	       title       = i18n("prefs.nagios_send_nsca_config_title"),
-	       description = i18n("prefs.nagios_send_nsca_config_description"),
-	    }, nagios_host_name = {
-	       title       = i18n("prefs.nagios_host_name_title"),
-	       description = i18n("prefs.nagios_host_name_description"),
-	    }, nagios_service_name = {
-	       title       = i18n("prefs.nagios_service_name_title"),
-	       description = i18n("prefs.nagios_service_name_description"),
-	    },
-	 }
-	 i["entries"] = table.merge(i["entries"], nagios)
-      end
-   end
-end
-
 
 function isSubpageAvailable(subpage, show_advanced_prefs)
   if show_advanced_prefs == nil then
@@ -311,12 +58,54 @@ function isSubpageAvailable(subpage, show_advanced_prefs)
   if (subpage.disabled) or
      ((subpage.advanced) and (not show_advanced_prefs)) or
      ((subpage.pro_only) and (not ntop.isPro())) or
-     ((subpage.enterprise_only) and (not info["version.enterprise_edition"])) then
+     ((subpage.enterprise_only) and (not info["version.enterprise_edition"]) and (not have_nedge)) or
+     (subpage.nedge_hidden) and (have_nedge) then
     return false
   end
 
   return true
 end
+
+local subpage_active = nil
+
+function prefsGetActiveSubpage(show_advanced_prefs, tab)
+  for _, subpage in ipairs(menu_subpages) do
+    if not isSubpageAvailable(subpage, show_advanced_prefs) then
+      subpage.disabled = true
+      
+      if subpage.id == tab then
+        -- will set to default
+        tab = nil
+      end
+    elseif subpage.id == tab then
+      subpage_active = subpage
+    end
+  end
+
+  -- default subpage
+  if isEmptyString(tab) then
+    -- Pick the first available subpage
+    for _, subpage in ipairs(menu_subpages) do
+      if isSubpageAvailable(subpage, show_advanced_prefs) then
+        subpage_active = subpage
+        tab = subpage.id
+        break
+      end
+    end
+  end
+
+  return subpage_active, tab
+end
+
+function printMenuSubpages(tab)
+  for _, subpage in ipairs(menu_subpages) do
+    if not subpage.disabled then
+      print[[<a href="]] print(ntop.getHttpPrefix()) print[[/lua/admin/prefs.lua?tab=]] print(subpage.id) print[[" class="list-group-item menu-item]] if(tab == subpage.id) then print(" active") end print[[">]] print(subpage.label) print[[</a>]]
+    end
+  end
+end
+
+-- ############################################
 
 -- notify ntopng upon preference changes
 function notifyNtopng(key)
@@ -336,7 +125,7 @@ end
 local options_script_loaded = false
 local options_ctr = 0
 
-function prefsResolutionButtons(fmt, value, fixed_id)
+function prefsResolutionButtons(fmt, value, fixed_id, format_spec)
   local ctrl_id
   if fixed_id ~= nil then
     ctrl_id = fixed_id
@@ -345,7 +134,7 @@ function prefsResolutionButtons(fmt, value, fixed_id)
     options_ctr = options_ctr + 1
   end
 
-  local res = makeResolutionButtons(FMT_TO_DATA_TIME, ctrl_id, fmt, value, {classes={"pull-right"}})
+  local res = makeResolutionButtons(format_spec or FMT_TO_DATA_TIME, ctrl_id, fmt, value, {classes={"pull-right"}})
 
   print(res.html)
   print("<script>")
@@ -372,6 +161,7 @@ function prefsInputFieldPrefs(label, comment, prekey, key, default_value, _input
     k = prekey.."."..key
   end
 
+ if not skip_redis then
   if(_POST[key] ~= nil) then
     v_s = _POST[key]
     v = tonumber(v_s)
@@ -402,7 +192,7 @@ function prefsInputFieldPrefs(label, comment, prekey, key, default_value, _input
       v_s = ntop.getPref(k)
     end
     value = v_s
-    if((v_s==nil) or (v_s=="")) then
+    if((v_s==nil) or (v_s=="") or (v_s=="nil")) then
       value = default_value
       if not isEmptyString(prekey) then
         ntop.setPref(k, tostring(default_value))
@@ -410,6 +200,9 @@ function prefsInputFieldPrefs(label, comment, prekey, key, default_value, _input
       end
     end
   end
+ else
+   value = default_value
+ end -- skip_redis
 
   if ((showEnabled == nil) or (showEnabled == true)) then
     showEnabled = "table-row"
@@ -441,6 +234,9 @@ function prefsInputFieldPrefs(label, comment, prekey, key, default_value, _input
 
   if (_input_type == "number") then
     attributes["required"] = "required"
+  elseif (_input_type == "password") then
+    -- disable chrome autocomplete
+    attributes["autocomplete"] = "new-password"
   end
 
   local input_type = "text"
@@ -458,7 +254,7 @@ function prefsInputFieldPrefs(label, comment, prekey, key, default_value, _input
           <td width="100%;"></td>
           <td style="vertical-align:top;">]]
       if extra.tformat ~= nil then
-        value = prefsResolutionButtons(extra.tformat, value)
+        value = prefsResolutionButtons(extra.tformat, value, nil, extra.format_spec)
       end
 
       if extra.width == nil then
@@ -472,16 +268,17 @@ function prefsInputFieldPrefs(label, comment, prekey, key, default_value, _input
         style["width"] = "15em"
       end
       style["margin-left"] = "auto"
+      style["display"] = "inline"
 
       style = table.merge(style, extra.style)
       attributes = table.merge(attributes, extra.attributes)
 
       print[[
           </td>
-          <td style="vertical-align:top; padding-left: 2em;">
+          <td style="vertical-align:top; padding-left: 2em; white-space: nowrap;">
             <input id="id_input_]] print(key) print[[" type="]] print(input_type) print [[" class="form-control" ]] print(table.tconcat(attributes, "=", " ", nil, '"')) print[[ name="]] print(key) print [[" style="]] print(table.tconcat(style, ":", "; ", ";")) print[[" value="]] print(value..'"')
           if disableAutocomplete then print(" autocomplete=\"off\"") end
-        print [[/>
+        print [[/>]] print(extra.append or "") print[[
           </td>
         </tr>
         <tr>
@@ -541,7 +338,7 @@ end
 
 function toggleTableButtonPrefs(label, comment, on_label, on_value, on_color , off_label, off_value, off_color, submit_field,
                                 redis_key, default_value, disabled, elementToSwitch, hideOn, showElement)
-
+ if not skip_redis then
   value = ntop.getPref(redis_key)
   if(_POST[submit_field] ~= nil) then
     if ( (value == nil) or (value ~= _POST[submit_field])) then
@@ -560,6 +357,9 @@ function toggleTableButtonPrefs(label, comment, on_label, on_value, on_color , o
       notifyNtopng(submit_field)
     end
   end
+ else
+   value = default_value
+ end
 
   if (disabled == true) then
     disabled = 'disabled = ""'
@@ -636,21 +436,54 @@ function toggleTableButtonPrefs(label, comment, on_label, on_value, on_color , o
   return(value)
 end
 
+local function get_pref_redis_key(options)
+  local prefix = options.redis_prefix or "ntopng.prefs."
+  return prefix .. ternary(options.pref ~= nil, options.pref, options.field)
+end
+
+function prefsToggleButton(params)
+  defaults = {
+    to_switch = {},             -- a list of elements to be switched on or off
+    on_text = "On",             -- The text when the button is on
+    on_value = "1",             -- The value when the button is on
+    on_class = "success",       -- The css class when the button is on
+    off_text = "Off",           -- The text when the button is off
+    off_value = "0",            -- The value when the button is off
+    off_class = "danger",       -- The css class when the button is off
+    reverse_switch = false      -- If true, elements are hidden when the item is enabled
+  }
+
+  local options = table.merge(defaults, params)
+  local redis_key = get_pref_redis_key(options)
+
+  return toggleTableButtonPrefs(params.title or subpage_active.entries[options.field].title,
+    (params.description or subpage_active.entries[options.field].description) .. (params.content or subpage_active.entries[options.field].content or ""),
+    options.on_text, options.on_value, options.on_class,
+    options.off_text, options.off_value, options.off_class,
+    options.field, redis_key,
+    options.default, options.disabled, options.to_switch, options.reverse_switch, not options.hidden)
+end
+
 function multipleTableButtonPrefs(label, comment, array_labels, array_values, default_value, selected_color,
                                   submit_field, redis_key, disabled, elementToSwitch, showElementArray,
-                                  javascriptAfterSwitch, showElement)
-  if(_POST[submit_field] ~= nil) then
+                                  javascriptAfterSwitch, showElement, initialValue, toggleElementArray)
+   local value
+  if not skip_redis then
+   if(_POST[submit_field] ~= nil) then
     ntop.setPref(redis_key, _POST[submit_field])
     value = _POST[submit_field]
     notifyNtopng(submit_field)
-  else
-    value = ntop.getPref(redis_key)
+   else
+    value = initialValue or ntop.getPref(redis_key)
     if(value == "") then
       if(default_value ~= nil) then
         ntop.setPref(redis_key, default_value)
         value = default_value
       end
     end
+   end
+  else
+    value = default_value
   end
 
   if (disabled == true) then
@@ -680,13 +513,13 @@ function multipleTableButtonPrefs(label, comment, array_labels, array_values, de
         end
         type_button = "btn-"..color.."  active"
       end
-      print('<button id="id_'..array_values[nameCount]..'" value="'..array_values[nameCount]..'" type="button" class="btn btn-sm '..type_button..'" data-toggle="button">'..array_labels[nameCount]..'</button>\n')
+      print('<button id="id_'..submit_field..'_'..array_values[nameCount]..'" value="'..array_values[nameCount]..'" type="button" class="btn btn-sm '..type_button..'" data-toggle="button">'..array_labels[nameCount]..'</button>\n')
     end
     print('</div>\n')
     print('<input type="hidden" id="id-toggle-'..submit_field..'" name="'..submit_field..'" value="'..value..'" />\n')
     print('<script>\n')
     for nameCount = 1, #array_labels do
-      print('$("#id_'..array_values[nameCount]..'").click(function() {\n')
+      print('$("#id_'..submit_field..'_'..array_values[nameCount]..'").click(function() {\n')
       print(' var field = $(\'#id-toggle-'..submit_field..'\');\n')
       print(' var oldval = field.val(); ')
       print(' field.val("'..array_values[nameCount]..'").trigger("change");\n')
@@ -699,7 +532,7 @@ function multipleTableButtonPrefs(label, comment, array_labels, array_values, de
           color = selected_color
         end
 
-        print[[ var class_]] print(array_values[indexLabel]) print[[ = document.getElementById("id_]] print(array_values[indexLabel]) print [[");
+        print[[ var class_]] print(array_values[indexLabel]) print[[ = document.getElementById("id_]] print(submit_field..'_') print(array_values[indexLabel]) print [[");
         class_]] print(array_values[indexLabel]) print[[.removeAttribute("class");]]
         if(array_values[indexLabel] == array_values[nameCount]) then
           print[[class_]] print(array_values[indexLabel]) print[[.setAttribute("class", "btn btn-sm btn-]]print(color) print[[ active");]]
@@ -708,20 +541,40 @@ function multipleTableButtonPrefs(label, comment, array_labels, array_values, de
         end
       end
 
+      -- Show/Hide all the elementToSwitch items at once
       if (showElementArray ~= nil) then
-      for indexSwitch = 1, #showElementArray do
-        if (indexSwitch == nameCount) then
-          if elementToSwitch ~= nil then
-            for element = 1, #elementToSwitch do
-              if (showElementArray[indexSwitch] == true) then
-                print('$("#'..elementToSwitch[element]..'").css("display","table-row");\n')
-              else
-                print('$("#'..elementToSwitch[element]..'").css("display","none");\n')
+        for indexSwitch = 1, #showElementArray do
+          if (indexSwitch == nameCount) then
+            if elementToSwitch ~= nil then
+              for element = 1, #elementToSwitch do
+                if (showElementArray[indexSwitch] == true) then
+                  -- NOTE: this is executed into the js change callback
+                  print('$("#'..elementToSwitch[element]..'").css("display","table-row");\n')
+                else
+                  -- NOTE: this is executed into the js change callback
+                  print('$("#'..elementToSwitch[element]..'").css("display","none");\n')
+                end
               end
             end
           end
         end
-      end
+      -- Show/Hide all the elementToSwitch selectively
+      elseif (toggleElementArray ~= nil) then
+        for indexSwitch = 1, #toggleElementArray do
+          if (indexSwitch == nameCount) then
+            if elementToSwitch ~= nil then
+              for element = 1, #elementToSwitch do
+                if (toggleElementArray[indexSwitch][element] == true) then
+                  -- NOTE: this is executed into the js change callback
+                  print('$("#'..elementToSwitch[element]..'").css("display","table-row");\n')
+                else
+                  -- NOTE: this is executed into the js change callback
+                  print('$("#'..elementToSwitch[element]..'").css("display","none");\n')
+                end
+              end
+            end
+          end
+        end
       end
 
       if javascriptAfterSwitch ~= nil then
@@ -764,4 +617,16 @@ function loggingSelector(label, comment, submit_field, redis_key)
           logging_keys, logging_values, value, color_map, submit_field, redis_key)
 
   return(value)
+end
+
+function printPageSection(section_name)
+   print('<tr><th colspan=2 class="info">'..section_name..'</th></tr>')
+end
+
+function printSaveButton(some_content)
+  print('<tr><td colspan=2 style="text-align:right;">' .. (some_content or "") .. '<button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button></td></tr>')
+end
+
+function prefsSkipRedis(skip)
+  skip_redis = skip
 end

@@ -24,6 +24,7 @@
 
 #include "config.h"
 
+
 #if defined (__FreeBSD) || defined(__FreeBSD__)
 #define _XOPEN_SOURCE
 #define _WITH_GETLINE
@@ -69,6 +70,7 @@
 #include <netdb.h>
 #include <dirent.h>
 #include <pwd.h>
+#include <sys/select.h>
 #endif
 
 #ifdef linux
@@ -91,11 +93,11 @@
 #if defined(linux)
 #include <linux/ethtool.h> // ethtool
 #include <linux/sockios.h> // sockios
-#elif defined(__FreeBSD__)
+#include <ifaddrs.h>
+#elif defined(__FreeBSD__) || defined(__APPLE__)
 #include <net/if_dl.h>
 #include <ifaddrs.h>
 #endif
-
 #ifdef __APPLE__
 #include <uuid/uuid.h>
 #endif
@@ -103,6 +105,7 @@
 extern "C" {
 #include "pcap.h"
 #include "ndpi_main.h"
+#include "lj_obj.h"
 #include "luajit.h"
 #include "lauxlib.h"
 #include "lualib.h"
@@ -127,8 +130,16 @@ extern "C" {
 #endif
 
 #include "third-party/uthash.h"
+
+#ifdef HAVE_MYSQL
 #include <mysql.h>
 #include <errmsg.h>
+#endif
+
+#ifdef HAVE_LIBCAP
+#include <sys/capability.h>
+#include <sys/prctl.h>
+#endif
 };
 
 #include <fstream>
@@ -138,27 +149,36 @@ extern "C" {
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <queue>
+#include <typeinfo>
 
 using namespace std;
 
 #include "mongoose.h"
 #include "patricia.h"
 #include "ntop_defines.h"
+#include "Mutex.h"
+#include "RwLock.h"
+#include "MDNS.h"
 #include "AddressTree.h"
 #include "AddressList.h"
 #include "IpAddress.h"
 #include "ntop_typedefs.h"
 #include "Trace.h"
 #include "NtopGlobals.h"
-#include "Profile.h"
-#include "Profiles.h"
+#include "Checkpointable.h"
 #include "TrafficStats.h"
 #include "nDPIStats.h"
 #include "GenericTrafficElement.h"
+
 #ifdef NTOPNG_PRO
+#include "Profile.h"
+#include "Profiles.h"
 #include "CountMinSketch.h"
+#ifndef HAVE_NEDGE
 #include "FlowProfile.h"
 #include "FlowProfiles.h"
+#endif
 #include "CounterTrend.h"
 #include "LRUMacIP.h"
 #include "FlowInterfacesStats.h"
@@ -172,15 +192,17 @@ using namespace std;
 #endif
 #include "FrequentStringItems.h"
 #include "FrequentNumericItems.h"
+#include "FrequentTrafficItems.h"
 #include "HostPools.h"
 #include "Prefs.h"
-#include "Mutex.h"
 #include "Utils.h"
-#include "ActivityStats.h"
 #include "DnsStats.h"
 #include "NetworkStats.h"
+#include "SNMP.h"
+#include "NetworkDiscovery.h"
 #include "ICMPstats.h"
 #include "Grouper.h"
+#include "FlowGrouper.h"
 #include "PacketStats.h"
 #include "ProtoStats.h"
 #include "TcpPacketStats.h"
@@ -189,7 +211,28 @@ using namespace std;
 #include "PacketDumperGeneric.h"
 #include "PacketDumper.h"
 #include "PacketDumperTuntap.h"
+#include "TcpFlowStats.h"
+#include "StoreManager.h"
+#include "StatsManager.h"
+#include "AlertsManager.h"
+#include "DB.h"
+#ifdef HAVE_MYSQL
+#include "MySQLDB.h"
+#endif
+#include "InterfaceStatsHash.h"
 #include "GenericHashEntry.h"
+#if defined(NTOPNG_PRO) && defined(HAVE_NDB)
+#include "ndb_api.h"
+#include "Nseries.h"
+#endif
+#include "NetworkInterface.h"
+#ifndef HAVE_NEDGE
+#include "PcapInterface.h"
+#endif
+#include "ViewInterface.h"
+#ifdef HAVE_PF_RING
+#include "PF_RINGInterface.h"
+#endif
 #include "AlertCounter.h"
 #include "GenericHost.h"
 #include "GenericHash.h"
@@ -197,30 +240,22 @@ using namespace std;
 #include "VirtualHostHash.h"
 #include "HTTPstats.h"
 #include "Redis.h"
+#ifndef HAVE_NEDGE
 #include "ElasticSearch.h"
 #include "Logstash.h"
-#include "StoreManager.h"
-#include "StatsManager.h"
-#include "AlertsManager.h"
-#include "DB.h"
-#include "MySQLDB.h"
-#include "TcpFlowStats.h"
-#include "InterfaceStatsHash.h"
-#include "NetworkInterface.h"
-#include "PcapInterface.h"
-#include "ViewInterface.h"
-#ifdef HAVE_PF_RING
-#include "PF_RINGInterface.h"
 #endif
 #ifdef NTOPNG_PRO
 #include "NtopPro.h"
+#include "DnsHostMapping.h"
 #ifndef WIN32
 #include "PacketBridge.h"
 #endif
 #include "TrafficShaper.h"
 #include "L7Policer.h"
+#ifdef HAVE_MYSQL
 #include "BatchedMySQLDB.h"
 #include "BatchedMySQLDBEntry.h"
+#endif
 #include "SPSCQueue.h"
 #include "LuaHandler.h"
 #ifndef WIN32
@@ -229,6 +264,7 @@ using namespace std;
 #include "FlowChecker.h"
 #include "FrequentStringItems.h"
 #include "FrequentNumericItems.h"
+#include "FrequentTrafficItems.h"
 #ifdef HAVE_NETFILTER
 #include "NetfilterInterface.h"
 #endif
@@ -236,15 +272,16 @@ using namespace std;
 #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__APPLE__)
 #include "DivertInterface.h"
 #endif
+#ifndef HAVE_NEDGE
 #include "ParserInterface.h"
 #include "CollectorInterface.h"
 #include "ZCCollectorInterface.h"
 #include "DummyInterface.h"
 #include "ExportInterface.h"
+#endif
+
 #include "Geolocation.h"
-#include "Flashstart.h"
 #include "GenericHost.h"
-#include "CategoryStats.h"
 #include "Vlan.h"
 #include "AutonomousSystem.h"
 #include "Mac.h"
@@ -258,17 +295,20 @@ using namespace std;
 #ifdef NTOPNG_PRO
 #include "AggregatedFlow.h"
 #include "AggregatedFlowHash.h"
+#ifdef HAVE_NDB
+#include "NDBFlowDB.h"
 #endif
+#endif
+#include "ThreadedActivity.h"
+#include "ThreadPool.h"
 #include "PeriodicActivities.h"
 #include "Lua.h"
 #include "MacManufacturers.h"
 #include "AddressResolution.h"
 #include "HTTPBL.h"
 #include "HTTPserver.h"
-#include "RuntimePrefs.h"
 #include "Paginator.h"
 #include "Ntop.h"
-
 
 #ifdef WIN32
 extern "C" {
@@ -277,5 +317,8 @@ extern "C" {
 };
 #endif
 
+#ifdef NTOPNG_PRO
+#include "ntoppro_defines.h"
+#endif
 
 #endif /* _NTOP_H_ */

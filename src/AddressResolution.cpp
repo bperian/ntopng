@@ -25,6 +25,16 @@
 
 AddressResolution::AddressResolution() {
   num_resolved_addresses = num_resolved_fails = 0;
+  num_resolvers =
+#ifdef NTOPNG_EMBEDDED_EDITION
+      1
+#else
+      CONST_NUM_RESOLVERS
+#endif
+      ;
+
+  if(!(resolveThreadLoop = (pthread_t*)calloc(num_resolvers, sizeof(pthread_t))))
+    throw 2;
 }
 
 /* ******************************************* */
@@ -34,13 +44,20 @@ bool AddressResolution::setLocalNetworks(char *rule) { return(localNetworks.addA
 
 /* ******************************************* */
 
-int16_t AddressResolution::findAddress(int family, void *addr) {
-  return(localNetworks.findAddress(family, addr));
+int16_t AddressResolution::findAddress(int family, void *addr, u_int8_t *network_mask_bits) {
+  return(localNetworks.findAddress(family, addr, network_mask_bits));
 }
 
 /* **************************************** */
 
 AddressResolution::~AddressResolution() {
+  if(ntop->getPrefs()->is_dns_resolution_enabled()) {
+    for(int i = 0; i < num_resolvers; i++)
+      pthread_join(resolveThreadLoop[i], NULL);
+  }
+
+  free(resolveThreadLoop);
+
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "Address resolution stats [%u resolved][%u failures]",
 			       num_resolved_addresses, num_resolved_fails);
 }
@@ -52,7 +69,7 @@ void AddressResolution::resolveHostName(char *_numeric_ip, char *symbolic, u_int
   u_int numeric_ip_len;
 
   snprintf(query, sizeof(query), "%s", _numeric_ip);
-  if((at = strchr(query, '@')) != '\0') at[0] = '\0';
+  if((at = strchr(query, '@')) != NULL) at[0] = '\0';
   numeric_ip = query;
   numeric_ip_len = strlen(numeric_ip)-1;
 
@@ -155,16 +172,9 @@ static void* resolveLoop(void* ptr) {
 
 void AddressResolution::startResolveAddressLoop() {
   if(ntop->getPrefs()->is_dns_resolution_enabled()) {
-    int num_resolvers =
-#ifdef NTOPNG_EMBEDDED_EDITION
-      1
-#else
-      CONST_NUM_RESOLVERS
-#endif
-      ;
 
-    for(int i=0; i<num_resolvers; i++)
-      pthread_create(&resolveThreadLoop, NULL, resolveLoop, (void*)this);
+    for(int i = 0; i < num_resolvers; i++)
+      pthread_create(&resolveThreadLoop[i], NULL, resolveLoop, (void*)this);
   }
 }
 
