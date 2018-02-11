@@ -19,6 +19,8 @@ local l4proto     = _GET["l4proto"]
 local l7proto     = _GET["l7proto"]
 local port        = _GET["port"]
 local info        = _GET["info"]
+local vlan        = _GET["vlan"]
+local profile     = _GET["profile"]
 local limit       = _GET["limit"]
 
 if epoch_begin> epoch_end then
@@ -47,11 +49,11 @@ headerShown = false
 
 -- os.execute("sleep 30") -- this is to test slow responses
 for k,v in pairs(versions) do
-   local res = getNumFlows(ifId, k, host, _GET["l4proto"], _GET["port"], _GET["protocol"], _GET["info"], _GET["epoch_begin"], _GET["epoch_end"])
+   local res = getNumFlows(ifId, k, host, _GET["l4proto"], _GET["port"], _GET["protocol"], _GET["info"], _GET["vlan"], _GET["profile"], _GET["epoch_begin"], _GET["epoch_end"])
 
    if res == nil or res[1] == nil then
       totals["status"] = "error"
-      totals["statusText"] = "Empty query response (database down or query killed/timed out?)"
+      totals["statusText"] = i18n("db_explorer.empty_query_response")
       goto continue
    end
 

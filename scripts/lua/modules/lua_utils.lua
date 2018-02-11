@@ -4,17 +4,46 @@
 
 dirs = ntop.getDirs()
 
-package.path = dirs.installdir .. "/scripts/lua/modules/?/init.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/i18n/?.lua;" .. package.path
 
 require "lua_trace"
-
-i18n = require "i18n"
-local locale = "en" -- FIX make it configurable
-i18n.loadFile(dirs.installdir..'/scripts/locales/'..locale..'.lua')
+locales_utils = require "locales_utils"
+local os_utils = require "os_utils"
 
 -- ##############################################
 
-function getInterfaceName(interface_id)
+-- Note: Regexs are applied by default. Pass plain=true to disable them.
+function string.contains(String,Start,plain)
+   if type(String) ~= 'string' or type(Start) ~= 'string' then
+      return false
+   end
+
+   local i,j = string.find(String, Start, 1, plain)
+
+   return(i ~= nil)
+end
+
+-- ##############################################
+
+function shortenString(name, max_len)
+   if(name == nil) then return("") end
+
+   if max_len == nil then
+      max_len = ntop.getPref("ntopng.prefs.max_ui_strlen")
+      max_len = tonumber(max_len)
+      if(max_len == nil) then max_len = 24 end
+   end
+
+   if(string.len(name) < max_len) then
+      return(name)
+   else
+      return(string.sub(name, 1, max_len).."...")
+   end
+end
+
+-- ##############################################
+
+function getInterfaceName(interface_id, windows_skip_description)
    local ifnames = interface.getIfNames()
 
    interface_id = tonumber(interface_id)
@@ -23,40 +52,39 @@ function getInterfaceName(interface_id)
       interface.select(if_name)
       _ifstats = interface.getStats()
       if(_ifstats.id == interface_id) then
-	 return(_ifstats.name)
+	 local ret = _ifstats.name
+
+	 if(windows_skip_description ~= true and string.contains(ret, "{")) then -- Windows
+	    ret = _ifstats.description
+	 end
+	 return(ret)
       end
    end
 
    return("")
 end
 
--- ##############################################
-
-function getInterfaceId(interface_name)
-   return(interface.name2id(interface_name))
-end
-
 -- Note that ifname can be set by Lua.cpp so don't touch it if already defined
 if((ifname == nil) and (_GET ~= nil)) then
-  ifname = _GET["ifid"]
+   ifname = _GET["ifid"]
 
-  if(ifname ~= nil) then
-     if(ifname.."" == tostring(tonumber(ifname)).."") then
-	-- ifname does not contain the interface name but rather the interface id
-	ifname = getInterfaceName(ifname)
-	if(ifname == "") then ifname = nil end
-     end
-  end
+   if(ifname ~= nil) then
+      if(ifname.."" == tostring(tonumber(ifname)).."") then
+	 -- ifname does not contain the interface name but rather the interface id
+	 ifname = getInterfaceName(ifname, true)
+	 if(ifname == "") then ifname = nil end
+      end
+   end
 
-  if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => Session:".._SESSION["session"]) end
+   if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => Session:".._SESSION["session"]) end
 
-  if((ifname == nil) and (_SESSION ~= nil)) then
-    if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => set ifname by _SESSION value") end
-    ifname = _SESSION["ifname"]
-    if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => ifname:"..ifname) end
-  else
-    if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => set ifname by _GET value") end
-  end
+   if((ifname == nil) and (_SESSION ~= nil)) then
+      if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => set ifname by _SESSION value") end
+      ifname = _SESSION["ifname"]
+      if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => ifname:"..ifname) end
+   else
+      if(debug_session) then traceError(TRACE_DEBUG,TRACE_CONSOLE, "Session => set ifname by _GET value") end
+   end
 end
 
 --print("(((("..ifname.."))))")
@@ -72,7 +100,7 @@ function __LINE__() return debug.getinfo(2, 'l').currentline end
 
 -- ##############################################
 
-function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition)
+function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition, extra_headers)
   info = ntop.getInfo(false)
 
   print('HTTP/1.1 200 OK\r\n')
@@ -85,6 +113,11 @@ function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition)
   if(ifname ~= nil) then print('Set-Cookie: ifname=' .. ifname .. '; path=/\r\n') end
   print('Content-Type: '.. mime ..'\r\n')
   if(content_disposition ~= nil) then print('Content-Disposition: '..content_disposition..'\r\n') end
+  if type(extra_headers) == "table" then
+     for hname, hval in pairs(extra_headers) do
+	print(hname..': '..hval..'\r\n')
+     end
+  end
   print('Last-Modified: '..os.date("!%a, %m %B %Y %X %Z").."\r\n")
   print('\r\n')
 end
@@ -97,8 +130,8 @@ end
 
 -- ##############################################
 
-function sendHTTPHeader(mime, content_disposition)
-  sendHTTPHeaderIfName(mime, nil, 3600, content_disposition)
+function sendHTTPHeader(mime, content_disposition, extra_headers)
+  sendHTTPHeaderIfName(mime, nil, 3600, content_disposition, extra_headers)
 end
 
 -- ##############################################
@@ -142,7 +175,8 @@ end
 -- ##############################################
 
 function isMacAddress(address)
-   if(string.match(address, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") ~= nil) then
+   if(string.match(address, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") ~= nil)  or
+     (string.match(address, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x%@%d+$") ~= nil) then
       return true
    end
    return false
@@ -177,15 +211,6 @@ function findStringArray(str, tofind)
   end
 
   return(rsp)
-end
-
--- ##############################################
-
-function string.contains(String,Start)
-   if type(String) ~= 'string' or type(Start) ~= 'string' then
-      return false
-   end
-   return(string.find(String,Start,1) ~= nil)
 end
 
 -- ##############################################
@@ -251,12 +276,128 @@ end
 
 -- ##############################################
 
-function shortenString(name, max_len)
-   max_len = max_len or 24
-    if(string.len(name) < max_len) then
-      return(name)
-   else
-      return(string.sub(name, 1, max_len).."...")
+function printVLANFilterDropdown(base_url, page_params)
+   local vlans = interface.getVLANsList()
+
+   if vlans == nil then vlans = {VLANs={}} end
+   vlans = vlans["VLANs"]
+
+   local ids = {}
+   for _, vlan in ipairs(vlans) do
+      ids[#ids + 1] = vlan["vlan_id"]
+   end
+
+   local vlan_id = _GET["vlan"]
+   local vlan_id_filter = ''
+   if not isEmptyString(vlan_id) then
+      vlan_id_filter = '<span class="glyphicon glyphicon-filter"></span>'
+   end
+
+   local vlan_id_params = table.clone(page_params)
+   vlan_id_params["vlan"] = nil
+
+   print[[\
+      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.vlan")) print[[]] print(vlan_id_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu" role="menu" id="flow_dropdown">\
+         <li><a href="]] print(getPageUrl(base_url, vlan_id_params)) print[[">]] print(i18n("flows_page.all_vlan_ids")) print[[</a></li>\]]
+   for _, vid in ipairs(ids) do
+      vlan_id_params["vlan"] = vid
+      print[[
+         <li>\
+           <a href="]] print(getPageUrl(base_url, vlan_id_params)) print[[">VLAN ]] print(tostring(vid)) print[[</a></li>\]]
+   end
+   print[[
+
+      </ul>]]
+end
+
+
+-- ##############################################
+
+function printFlowDevicesFilterDropdown(base_url, page_params)
+   if (ntop.isPro()) then
+      package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+      require "snmp_utils"
+   end
+
+   local flowdevs = interface.getFlowDevices()
+   local vlans = interface.getVLANsList()
+
+   if flowdevs == nil then flowdevs = {} end
+
+   local devips = {}
+   for dip, _ in pairsByValues(flowdevs, asc) do
+      devips[#devips + 1] = dip
+   end
+
+   local cur_dev = _GET["deviceIP"]
+   local cur_dev_filter = ''
+   local snmp_community = ''
+   if not isEmptyString(cur_dev) then
+      cur_dev_filter = '<span class="glyphicon glyphicon-filter"></span>'
+   end
+
+   local dev_params = table.clone(page_params)
+   for _, p in pairs({"deviceIP", "outIfIdx", "inIfIdx"}) do
+      dev_params[p] = nil
+   end
+
+   print[[, '<div class="btn-group pull-right">\
+      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.device_ip")) print[[]] print(cur_dev_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu" role="menu" id="flow_dropdown">\
+         <li><a href="]] print(getPageUrl(base_url, dev_params)) print[[">]] print(i18n("flows_page.all_devices")) print[[</a></li>\]]
+   for _, dip in ipairs(devips) do
+      dev_params["deviceIP"] = dip
+      local snmp_community = get_snmp_community(dip, true --[[ no default --]])
+      if not isEmptyString(snmp_community) then
+	 local snmp_name = get_snmp_device_name(dip, snmp_community)
+	 if not isEmptyString(snmp_name) and snmp_name ~= dip then
+	    dip = dip .. "["..shortenString(snmp_name).."]"
+	 end
+      else
+	 local resname = getResolvedAddress(hostkey2hostinfo(dip))
+	 if not isEmptyString(resname) and resname ~= dip then
+	    dip = dip .. "["..shortenString(resname).."]"
+	 end
+      end
+
+      print[[
+         <li>\
+           <a href="]] print(getPageUrl(base_url, dev_params)) print[[">]] print(i18n("flows_page.device_ip").." "..dip) print[[</a></li>\]]
+   end
+   print[[
+      </ul>\
+</div>']]
+
+   if cur_dev ~= nil then -- also print dropddowns for input and output interface index
+      local ports = interface.getFlowDeviceInfo(cur_dev)
+
+      for _, direction in pairs({"outIfIdx", "inIfIdx"}) do
+	 local cur_if = _GET[direction]
+	 local cur_if_filter = ''
+	 if not isEmptyString(cur_if) then
+	    cur_if_filter = '<span class="glyphicon glyphicon-filter"></span>'
+	 end
+
+	 local if_params = table.clone(page_params)
+
+	 if_params[direction] = nil
+	    print[[, '<div class="btn-group pull-right">\
+      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page."..direction)) print[[]] print(cur_if_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu" role="menu" id="flow_dropdown">\
+         <li><a href="]] print(getPageUrl(base_url, if_params)) print[[">]] print(i18n("flows_page.all_"..direction)) print[[</a></li>\]]
+
+	    for portidx, _ in pairsByKeys(ports, asc) do
+	       if_params[direction] = portidx
+	       print[[
+         <li>\
+           <a href="]] print(getPageUrl(base_url, if_params)) print[[">]] print(i18n("flows_page."..direction).." "..tostring(portidx)) print[[</a></li>\]]
+	    end
+	    print[[
+      </ul>\
+</div>']]
+      end
+
    end
 end
 
@@ -292,7 +433,9 @@ function shortHostName(name)
   if(#chunks == 4) then
     return(name)
   else
-    max_len = 24
+    local max_len = ntop.getPref("ntopng.prefs.max_ui_strlen")
+    max_len = tonumber(max_len)
+    if(max_len == nil) then max_len = 24 end
 
     chunks = {name:match("%w+:%w+:%w+:%w+:%w+:%w+")}
     --io.write(#chunks.."\n")
@@ -346,34 +489,51 @@ function l4Label(proto)
   return(_handleArray(l4_keys, proto))
 end
 
+-- ##############################################
+
+-- Note: make sure the maximum id for checkpoint_keys honours CONST_MAX_NUM_CHECKPOINTS
+local checkpoint_keys = {
+   -- following checkpoints are used for alerts
+   {0, "min"},
+   {1, "5mins"},
+   {2, "hour"},
+   {3, "day"},
+}
+
+function checkpointId(v)
+   local checkpointtable = {}
+   for i, t in ipairs(checkpoint_keys) do
+      checkpointtable[#checkpointtable + 1] = {t[1], t[2]}
+   end
+   return(_handleArray(checkpointtable, v))
+end
+
+-- ##############################################
+
 -- Alerts (see ntop_typedefs.h)
 -- each table entry is an array as:
 -- {"alert html string", "alert C enum value", "plain string"}
 alert_level_keys = {
-  { "<span class='label label-info'>Info</span>",       0, "info"    },
-  { "<span class='label label-warning'>Warning</span>", 1, "warning" },
-  { "<span class='label label-danger'>Error</span>",    2, "error"   }
+  { "<span class='label label-info'>" .. i18n("alerts_dashboard.none") .. "</span>",      -1, "none"   },
+  { "<span class='label label-info'>" .. i18n("alerts_dashboard.info") .. "</span>",       0, "info"    },
+  { "<span class='label label-warning'>" .. i18n("alerts_dashboard.warning") .. "</span>", 1, "warning" },
+  { "<span class='label label-danger'>" .. i18n("alerts_dashboard.error") .. "</span>",    2, "error"   }
 }
 
 alert_type_keys = {
-  { "<i class='fa fa-tint'></i> TCP SYN Flood",                            0, "tcp_syn_flood"              },
-  { "<i class='fa fa-tint'></i> Flows Flood",                              1, "flows_flood"                },
-  { "<i class='fa fa-arrow-circle-up'></i> Threshold Cross",               2, "threshold_cross"            },
-  { "<i class='fa fa-frown-o'></i> Blacklisted Host",                        3, "blacklist_host"             },
-  { "<i class='fa fa-clock-o'></i> Periodic Activity",                     4, "periodic_activity"          },
-  { "<i class='fa fa-sort-asc'></i> Quota Exceeded",                       5, "quota_exceeded"             },
-  { "<i class='fa fa-ban'></i> Malware Detected",                          6, "malware_detected"           },
-  { "<i class='fa fa-bomb'></i> Ongoing Attacker",                         7, "ongoing_attacker"           },
-  { "<i class='fa fa-bomb'></i> Under Attack",                             8, "under_attack"               },
-  { "<i class='fa fa-exclamation'></i> Misconfigured App",                 9, "misconfigured_app"          },
-  { "<i class='fa fa-exclamation'></i> Suspicious Activity",              10, "suspicious_activity"        },
-  { "<i class='fa fa-exclamation'></i> Too Many Alerts",                  11, "too_many_alerts"            },
-  { "<i class='fa fa-exclamation'></i> MySQL open_files_limit too small", 12, "open_files_limit_too_small" },
-  { "<i class='fa fa-exclamation'></i> Interface Alerted",                13, "interface_alerted"          },
-  { "<i class='fa fa-exclamation'></i> Flow Misbehaviour",                14, "flow_misbehaviour"          },
+  { "<i class='fa fa-ok'></i> " .. i18n("alerts_dashboard.no_alert"),                             -1, "alert_none"                 },
+  { "<i class='fa fa-life-ring'></i> " .. i18n("alerts_dashboard.tcp_syn_flood"),                  0, "tcp_syn_flood"              },
+  { "<i class='fa fa-life-ring'></i> " .. i18n("alerts_dashboard.flows_flood"),                    1, "flows_flood"                },
+  { "<i class='fa fa-arrow-circle-up'></i> " .. i18n("alerts_dashboard.threashold_cross"),          2, "threshold_cross"            },
+  { "<i class='fa fa-exclamation'></i> " .. i18n("alerts_dashboard.suspicious_activity"),          3, "suspicious_activity"        },
+  { "<i class='fa fa-exclamation'></i> " .. i18n("alerts_dashboard.interface_alerted"),            4, "interface_alerted"          },
+  { "<i class='fa fa-exclamation'></i> " .. i18n("alerts_dashboard.flow_misbehaviour"),            5, "flow_misbehaviour"          },
+  { "<i class='fa fa-exclamation'></i> " .. i18n("alerts_dashboard.remote_to_remote_flow"),        6, "flow_remote_to_remote"      },
+  { "<i class='fa fa-exclamation'></i> " .. i18n("alerts_dashboard.blacklisted_flow"),             7, "flow_blacklisted"           },
+  { "<i class='fa fa-ban'></i> " .. i18n("alerts_dashboard.blocked_flow"),                         8, "flow_blocked"               },
 }
 
-alert_entity_keys = {
+local alert_entity_keys = {
   { "Interface",       0, "interface"     },
   { "Host",            1, "host"          },
   { "Network",         2, "network"       },
@@ -381,12 +541,11 @@ alert_entity_keys = {
   { "Flow",            4, "flow"          }
 }
 
-alert_engine_keys = {
-   {i18n("show_alerts.minute"),  0, "min"    },
+local alert_engine_keys = {
+   {i18n("show_alerts.minute"),       0, "min"    },
    {i18n("show_alerts.five_minutes"), 1, "5mins"  },
-   {i18n("show_alerts.hourly"),    2, "hour"   },
-   {i18n("show_alerts.daily"),     3, "day"    },
-   {i18n("show_alerts.startup"),   4, "startup"},
+   {i18n("show_alerts.hourly"),       2, "hour"   },
+   {i18n("show_alerts.daily"),        3, "day"    },
 }
 
 -- Note: keep in sync with alarmable_metrics and alert_functions_infoes
@@ -500,8 +659,24 @@ function alertEntityRaw(entity_idx)
 end
 
 function areAlertsEnabled()
-  return ((not ntop.getPrefs().has_cmdl_disable_alerts) and
-          (ntop.getPref("ntopng.prefs.disable_alerts_generation") ~= "1"))
+  return (ntop.getPref("ntopng.prefs.disable_alerts_generation") ~= "1")
+end
+
+function mustScanAlerts(ifstats)
+   -- can't alert on view interfaces as checkpoints will collide for their underlying real interfaces
+   return areAlertsEnabled() and not ifstats["isView"]
+end
+
+function hasAlertsDisabled()
+  return ((_POST["disable_alerts_generation"] ~= nil) and (_POST["disable_alerts_generation"] == "1")) or
+      ((_POST["disable_alerts_generation"] == nil) and (ntop.getPref("ntopng.prefs.disable_alerts_generation") == "1"))
+end
+
+function hasNagiosSupport()
+  if prefs == nil then
+    prefs = ntop.getPrefs()
+  end
+  return prefs.nagios_nsca_host ~= nil
 end
 
 function firstToUpper(str)
@@ -547,11 +722,22 @@ function rev(a,b)
   return (a > b)
 end
 
+function asc_insensitive(a,b)
+  return (string.lower(a) < string.lower(b))
+end
+
+function rev_insensitive(a,b)
+  return (string.lower(a) > string.lower(b))
+end
+
 --for _key, _value in pairsByKeys(vals, rev) do
 --   print(_key .. "=" .. _value .. "\n")
 --end
 
-function round(num, idp)         return tonumber(string.format("%." .. (idp or 0) .. "f", num)) end
+function round(num, idp)
+   if(num == nil) then return(0) end
+   return tonumber(string.format("%." .. (idp or 0) .. "f", num))
+end
 --function round(num) return math.floor(num+.5) end
 
 -- Note that the function below returns a string as returning a number
@@ -592,23 +778,25 @@ end
 -- Convert bits to human readable format
 
 function bitsToSizeMultiplier(bits, multiplier)
-  precision = 2
-  kilobit = 1000;
-  megabit = kilobit * multiplier;
-  gigabit = megabit * multiplier;
-  terabit = gigabit * multiplier;
+   if(bits == nil) then return(0) end
 
-  if((bits >= kilobit) and (bits < megabit)) then
-    return round(bits / kilobit, precision) .. ' kbit/s';
-  elseif((bits >= megabit) and (bits < gigabit)) then
-    return round(bits / megabit, precision) .. ' Mbit/s';
-  elseif((bits >= gigabit) and (bits < terabit)) then
-    return round(bits / gigabit, precision) .. ' Gbit/s';
-  elseif(bits >= terabit) then
-    return round(bits / terabit, precision) .. ' Tbit/s';
-  else
-    return round(bits, precision) .. ' bit/s';
-  end
+   precision = 2
+   kilobit = 1000;
+   megabit = kilobit * multiplier;
+   gigabit = megabit * multiplier;
+   terabit = gigabit * multiplier;
+
+   if((bits >= kilobit) and (bits < megabit)) then
+      return round(bits / kilobit, precision) .. ' kbit/s';
+   elseif((bits >= megabit) and (bits < gigabit)) then
+      return round(bits / megabit, precision) .. ' Mbit/s';
+   elseif((bits >= gigabit) and (bits < terabit)) then
+      return round(bits / gigabit, precision) .. ' Gbit/s';
+   elseif(bits >= terabit) then
+      return round(bits / terabit, precision) .. ' Tbit/s';
+   else
+      return round(bits, precision) .. ' bit/s';
+   end
 end
 
 function bitsToSize(bits)
@@ -748,7 +936,11 @@ string.split = function(s, p)
 end
 
 function formatEpoch(epoch)
-  return(os.date("%d/%m/%Y %X", epoch))
+  if epoch == 0 then
+    return("-")
+  else
+    return(os.date("%d/%m/%Y %X", epoch))
+  end
 end
 
 function secondsToTime(seconds)
@@ -802,11 +994,21 @@ function secondsToTime(seconds)
   end
 
   if(sec > 0) then
-    if((string.len(msg) > 0) and (minutes > 0)) then msg = msg .. ", " end
+    if(string.len(msg) > 0) then msg = msg .. ", " end
     msg = msg .. string.format("%d sec", sec);
   end
 
   return msg
+end
+
+function compactTime(seconds)
+   if seconds == 0 then
+      return "< 1 sec"
+   elseif seconds >= 60 then
+      seconds = seconds - seconds % 60
+   end
+
+   return secondsToTime(seconds)
 end
 
 function msToTime(ms)
@@ -830,111 +1032,6 @@ function ends(String,End)
 end
 
 -- #################################################################
-
--- NOTE keep in sync with Flashstart::initMapping()
-
-host_categories = {
-      ["freetime"] = "FreeTime",
-      ["chat"] = "Chat",
-      ["onlineauctions"] = "Auctions",
-      ["onlinegames"] = "Online Games",
-      ["pets"] = "Animals",
-      ["porn"] = "Porn",
-      ["religion"] = "Religion",
-      ["phishing"] = "Phishing",
-      ["sexuality"] = "Sex",
-      ["games"] = "Games",
-      ["socialnetworking"] = "SocialNetwork",
-      ["jobsearch"] = "JobSearch",
-      ["mail"] = "Webmail",
-      ["news"] = "News",
-      ["proxy"] = "AnonymousProxy",
-      ["publicite"] = "Advertisement",
-      ["sports"] = "Sport",
-      ["vacation"] = "Travel",
-      ["ecommerce"] = "E-commerce",
-      ["instantmessaging"] = "InstantMessaging",
-      ["kidstimewasting"] = "KidGames",
-      ["audio-video"] = "AudioVideo",
-      ["books"] = "Books",
-      ["government"] = "Government",
-      ["malware"] = "Malware",
-      ["medical"] = "Medicine",
-      ["ann"] = "Ads",
-      ["drugs"] = "Drugs",
-      ["dating"] = "OnlineDating",
-      ["desktopsillies"] = "DesktopImages",
-      ["filehosting"] = "FileHosting",
-      ["filesharing"] = "FileSharing",
-      ["gambling"] = "Gambling",
-      ["warez"] = "CracksWarez",
-      ["radio"] = "Radio",
-      ["updatesites"] = "Updates",
-      ["financial"] = "FinanceBanking",
-      ["adult"] = "Adults",
-      ["fashion"] = "Fashion",
-      ["showbiz"] = "Showbiz",
-      ["ict"] = "ICT",
-      ["company"] = "Business",
-      ["education"] = "EducationSchool",
-      ["searchengines"] = "SearchEngines",
-      ["blog"] = "Blog",
-      ["association"] = "Associations",
-      ["music"] = "Musica",
-      ["legal"] = "Legal",
-      ["photo"] = "Photo",
-      ["stats"] = "Webstat",
-      ["content"] = "ContentServer",
-      ["domainforsale"] = "DomainForSale",
-      ["weapons"] = "Guns",
-      ["generic"] = "Generic"
-}
-
--- #################################################################
-
-function getCategoryLabel(cat)
-   if((cat == "") or (cat == nil) or (cat == "???")) then
-      return("")
-   end
-
-  for c,v in pairs(host_categories) do
-   if(c == cat) then
-     return(v)
-   end
-  end
-
-  return(cat)
-end
-
-function getCategoryIcon(what, cat)
-   if((cat == "") or (cat == nil) or (cat == "???")) then
-      return("")
-   end
-
-  ret = ""
-  for c,_ in pairs(cat) do
-   if(host_categories[c] ~= nil) then
-     ret = ret .. " <span class='label label-info'>"..host_categories[c].."</span>"
-   else
-     ret = ret .. " <span class='label label-info'>"..c.."</span>"
-   end
-  end
-
-  return(ret)
-end
-
-
-function abbreviateString(str, len)
-  if(str == nil) then
-    return("")
-  else
-    if(string.len(str) < len) then
-      return(str)
-    else
-      return(string.sub(str, 1, len).."...")
-    end
-  end
-end
 
 function bit(p)
   return 2 ^ (p - 1)  -- 1-based indexing
@@ -1056,6 +1153,20 @@ function get_timezone()
   return os.difftime(now, os.time(os.date("!*t", now)))
 end
 
+function getCategoriesWithProtocols()
+   local protocol_categories = interface.getnDPICategories()
+
+   for k,v in pairsByKeys(protocol_categories) do
+      protocol_categories[k] = {id=v, protos=interface.getnDPIProtocols(tonumber(v)), count=0}
+
+      for proto,_ in pairs(protocol_categories[k].protos) do
+         protocol_categories[k].count = protocol_categories[k].count + 1
+      end
+   end
+
+   return protocol_categories
+end
+
 function isValidPoolMember(member)
   if isEmptyString(member) then
     return false
@@ -1168,26 +1279,6 @@ function purifyInterfaceName(interface_name)
   return(interface_name)
 end
 
-function getPathDivider()
-   if(ntop.isWindows()) then
-      return "\\"
-   else
-      return "/"
-   end
-end
-
--- Fix path format Unix <-> Windows
-function fixPath(path)
-   if(ntop.isWindows() and (string.len(path) > 2)) then
-      path = string.gsub(path, "/", getPathDivider())
-      -- Avoid changing c:\.... into c_\....
-      path = string.sub(path, 1, 2) .. string.gsub(string.sub(path, 3), ":", "_")
-      -- io.write("->"..path.."\n")
-   end
-
-  return(path)
-end
-
 -- See datatype AggregationType in ntop_typedefs.h
 function aggregation2String(value)
   if(value == 0) then return("Client Name")
@@ -1293,9 +1384,40 @@ function getOSIcon(name)
   return(icon)
 end
 
-function getApplicationLabel(name)
-  icon = ""
+-- #################################
 
+function getOperatingSystemName(id)
+   if(id == 1) then return("Linux")
+   elseif(id == 2) then return("Windows")
+   elseif(id == 3) then return("MacOS")
+   elseif(id == 4) then return("iOS")
+   elseif(id == 5) then return("Android")
+   elseif(id == 6) then return("LaserJET")
+   elseif(id == 7) then return("AppleAirport")
+   else
+      return("") -- Unknown
+   end
+end
+
+-- #################################
+
+function getOperatingSystemIcon(id)
+   if(id == 1) then return(' <i class=\'fa fa-linux fa-lg\'></i>')
+   elseif(id == 2) then return(' <i class=\'fa fa-windows fa-lg\'></i>')
+   elseif(id == 3) then return(' <i class=\'fa fa-apple fa-lg\'></i>')
+   elseif(id == 4) then return(' <i class=\'fa fa-apple fa-lg\'></i>')
+   elseif(id == 5) then return(' <i class=\'fa fa-android fa-lg\'></i>')
+   elseif(id == 6) then return(' LasetJET')
+   elseif(id == 7) then return(' Apple Airport')
+
+   else return("")
+   end
+end
+
+-- #################################
+
+function getApplicationIcon(name)
+  local icon = ""
   if(name == nil) then name = "" end
 
   if(findString(name, "Skype")) then icon = '<i class=\'fa fa-skype fa-lg\'></i>'
@@ -1310,6 +1432,14 @@ function getApplicationLabel(name)
   elseif(findString(name, "Youtube")) then icon = '<i class=\'fa fa-youtube-square fa-lg\'></i>'
   elseif(findString(name, "thunderbird")) then icon = '<i class=\'fa fa-paper-plane fa-lg\'></i>'
   end
+
+  return(icon)
+end
+
+-- #################################
+
+function getApplicationLabel(name)
+  local icon = getApplicationIcon(name)
 
   name = name:gsub("^%l", string.upper)
   return(icon.." "..name)
@@ -1383,7 +1513,11 @@ resolved_host_labels_cache = {}
 
 -- host_ip can be a mac. host_mac can be null.
 function getHostAltName(host_ip, host_mac)
-   local alt_name = resolved_host_labels_cache[host_ip]
+   local alt_name = nil
+
+   if not isEmptyString(host_ip) then
+      alt_name = resolved_host_labels_cache[host_ip]
+   end
 
    -- cache hit
    if(alt_name ~= nil) then
@@ -1407,10 +1541,51 @@ function getHostAltName(host_ip, host_mac)
 end
 
 function setHostAltName(host_ip, alt_name)
-  ntop.setHashCache(getHostAltNamesKey(), host_ip, alt_name)
+   ntop.setHashCache(getHostAltNamesKey(), host_ip, alt_name)
 end
 
 -- Mac Addresses --
+
+-- A function to give a useful device name
+function getDeviceName(device_mac, vlan, skip_manufacturer)
+   local name = getHostAltName(device_mac)
+
+   if name == device_mac then
+      -- Not found, try with first host
+      local info = interface.getHostsInfo(false, nil, 1, 0, nil, nil, nil, tonumber(vlan), nil,
+               nil, device_mac)
+
+      if (info ~= nil) then
+         for x, host in pairs(info.hosts) do
+            if not isEmptyString(host.name) and host.name ~= host.ip then
+               name = host.name
+            else
+               name = getHostAltName(host.ip)
+
+               if name == host.ip then
+                  name = nil
+               end
+            end
+            break
+         end
+      else
+         name = nil
+      end
+   end
+
+   if isEmptyString(name) then
+      local manufacturer = ntop.getMacManufacturer(device_mac)
+
+      if (not skip_manufacturer) and (manufacturer ~= nil) then
+         name = manufacturer.extended
+      else
+         -- last resort
+         name = device_mac
+      end
+   end
+
+   return name
+end
 
 local specialMACs = {
   "01:00:0C",
@@ -1455,7 +1630,7 @@ function host2name(name, vlan)
    return name
 end
 
-function flowinfo2hostname(flow_info, host_type, vlan)
+function flowinfo2hostname(flow_info, host_type)
    local name
    local orig_name
 
@@ -1733,28 +1908,16 @@ function version2int(v)
   end
 end
 
-function ntop_version_check()
-   _rsp = ntop.getCache("ntopng.version", true)
+function get_version_update_msg(info, latest_version)
+  version_elems = split(info["version"], " ")
+  new_version = version2int(latest_version)
+  this_version = version2int(version_elems[1])
 
-   if((_rsp == nil) or (_rsp == "")) then
-      _rsp = ntop.httpGet("http://www.ntop.org/ntopng.version", "", "", 10)
-      if((_rsp == nil) or (_rsp["CONTENT"] == nil)) then rsp = "0.0.0" else rsp = _rsp["CONTENT"] end
-      ntop.setCache("ntopng.version", rsp, 86400)
-   else
-      rsp = _rsp
-   end
-
-   if(rsp ~= nil) then
-      info = ntop.getInfo(false)
-      new_version = version2int(rsp)
-
-      version_elems  = split(info["version"], " ");
-      this_version   = version2int(version_elems[1])
-
-      if(new_version > this_version) then
-	 print("<p><div class=\"alert alert-warning\"><font color=red><i class=\"fa fa-cloud-download fa-lg\"></i> A new "..info["product"].." (v." .. rsp .. ") is available for <A HREF=\"http://www.ntop.org/get-started/download/\">download</A>: please upgrade.</font></div></p>")
-      end
-   end
+  if(new_version > this_version) then
+   return [[<div class='alert alert-warning'><font color=red><i class='fa fa-cloud-download fa-lg'></i> A new ]]..info["product"]..[[ (v.]]..(latest_version)..[[) is available for <A HREF='http://www.ntop.org/get-started/download/'>download</A>: please upgrade.</font></div>]]
+  else
+   return ""
+  end
 end
 
 
@@ -1831,14 +1994,87 @@ function getRedisPrefix(str)
   end
 end
 
+function getPathFromIPv6(addr)
+   local ipv6 = {"0000", "0000", "0000", "0000",
+		 "0000", "0000", "0000", "0000"}
+
+   local ip, subnet = (addr or ''):match("([^/]+)/?(%d*)")
+
+   if ip == nil then ip = '' end
+   if subnet == nil then subnet = '' end
+
+   local prefix = ip or ''
+   local suffix = ''
+   if ip:find("::") then
+      local s = ip:gsub("::","x")
+      local t = s:split("x")
+      prefix, suffix = t[1] or '', t[2] or ''
+   end
+
+   for i, p in ipairs(prefix:split(":") or {prefix}) do
+      ipv6[i] = string.format('%.4x', tonumber(p, 16) or 0)
+   end
+
+   local i = 1
+   for _, p in pairsByKeys(suffix:split(":") or {suffix}, rev) do
+      ipv6[8 - i + 1] = string.format('%.4x', tonumber(p, 16) or 0)
+      i = i + 1
+   end
+
+   local most_significant = {ipv6[1], ipv6[2], ipv6[3], ipv6[4]}
+   local interface_identifier = {ipv6[5], ipv6[6], ipv6[7], ipv6[8]}
+
+   -- most significant part of the address goes in a hierarchical structure
+   local res = table.concat(most_significant, "/")
+   -- the interface identifies goes as-is because it is non structured
+   res = os_utils.fixPath(res.."/"..table.concat(interface_identifier, "_"))
+
+   if not isEmptyString(subnet) then
+      res = os_utils.fixPath(res.."/"..subnet)
+   end
+
+   return res
+end
+
+function getPathFromMac(addr)
+   if not isMacAddress(addr) then return end
+
+   local mac = {}
+   local vlan = addr:match("@%d+$") or ''
+
+   for i, p in ipairs(addr:split(":")) do
+      mac[i] = string.format('%.2x', tonumber(p, 16) or 0)
+   end
+
+   local manufacturer = {mac[1], mac[2], mac[3]}
+   local nic = {mac[4], mac[5], mac[6]}
+
+   -- each manufacturer has its own directory
+   local res = os_utils.fixPath("macs/"..table.concat(manufacturer, "_"))
+   -- the nic identifier goes as-is because it is non structured
+   res = os_utils.fixPath(res.."/"..table.concat(nic, "/"))
+   -- finally the vlan
+   res = res..vlan
+
+   return res
+end
+
 function getPathFromKey(key)
-  local path = string.gsub(key, "%.", "/")
-  path = string.gsub(path, ":", "_")
-  return fixPath(path)
+   if key == nil then key = "" end
+
+   if isIPv6(key) then
+      return getPathFromIPv6(key)
+   elseif isMacAddress(key) then
+      return getPathFromMac(key)
+   end
+
+   key = tostring(key):gsub("[%.:]", "/")
+
+   return os_utils.fixPath(key)
 end
 
 function getRedisIfacePrefix(ifid)
-   return "ntopng.prefs.iface_"..tostring(ifid)
+   return "ntopng.prefs.ifid_"..tostring(ifid)
 end
 
 -----  End of Redis Utils  ------
@@ -1873,7 +2109,7 @@ function isLocalPacketdumpEnabled()
    else
       nbox_integration = true
    end
-   return isAdministrator() and not nbox_integration and interface.isPacketInterface()
+   return isAdministrator() and not nbox_integration and interface.isPacketInterface() and not ntop.isnEdge()
 end
 
 function processColor(proc)
@@ -1891,7 +2127,7 @@ end
  -- Table preferences
 
 function getDefaultTableSort(table_type)
-   local table_key = getRedisPrefix("ntopng.prefs.table")
+   local table_key = getRedisPrefix("ntopng.sort.table")
    local value = nil
 
   if(table_type ~= nil) then
@@ -1901,28 +2137,28 @@ function getDefaultTableSort(table_type)
   return(value)
 end
 
-function getDefaultTableSortOrder(table_type)
-   local table_key = getRedisPrefix("ntopng.prefs.table")
+function getDefaultTableSortOrder(table_type, force_get)
+   local table_key = getRedisPrefix("ntopng.sort.table")
    local value = nil
 
   if(table_type ~= nil) then
     value = ntop.getHashCache(table_key, "sort_order_"..table_type)
   end
-  if((value == nil) or (value == "")) then value = 'desc' end
+  if((value == nil) or (value == "")) and (force_get ~= true) then value = 'desc' end
   return(value)
 end
 
 function getDefaultTableSize()
-  table_key = getRedisPrefix("ntopng.prefs.table")
+  table_key = getRedisPrefix("ntopng.sort.table")
   value = ntop.getHashCache(table_key, "rows_number")
   if((value == nil) or (value == "")) then value = 10 end
   return(tonumber(value))
 end
 
-function tablePreferences(key, value)
-  table_key = getRedisPrefix("ntopng.prefs.table")
+function tablePreferences(key, value, force_set)
+  table_key = getRedisPrefix("ntopng.sort.table")
 
-  if((value == nil) or (value == "")) then
+  if((value == nil) or (value == "")) and (force_set ~= true) then
     -- Get preferences
     return ntop.getHashCache(table_key, key)
   else
@@ -1933,12 +2169,22 @@ function tablePreferences(key, value)
 end
 
 
-function getInterfaceNameAlias(interface_name)
+function getInterfaceNameAlias(interface_name, max_len)
    if(interface_name == nil) then return("") end
    -- io.write(debug.traceback().."\n")
-   label = ntop.getCache('ntopng.prefs.'..interface_name..'.name')
+   local label = ntop.getCache('ntopng.prefs.'..interface_name..'.name')
    if((label == nil) or (label == "")) then
-      return(interface_name)
+      if(string.contains(interface_name, "{")) then -- Windows
+	 -- attempt to print the description
+	 local _ifstats = interface.getStats()
+	 local nm = _ifstats.description
+	 if tonumber(max_len) ~= nil and tonumber(max_len) > 0 then
+	    nm = shortenString(_ifstats.description, tonumber(max_len))
+	 end
+	 return(nm)
+      else
+	 return(interface_name)
+      end
    else
       return(label)
    end
@@ -1978,18 +2224,64 @@ function setInterfaceRegreshRate(ifid, refreshrate)
    end
 end
 
+local function getCustomnDPIProtoCategoriesKey(ifid)
+   return getRedisIfacePrefix(ifid)..".custom_nDPI_proto_categories"
+end
+
+function getCustomnDPIProtoCategories(if_name)
+   local ifid = getInterfaceId(if_name)
+   local ndpi_protos = interface.getnDPIProtocols()
+   local key = getCustomnDPIProtoCategoriesKey(ifid)
+
+   local res = {}
+   for _, app_id in pairs(ndpi_protos) do
+      local custom_category = ntop.getHashCache(key, tostring(app_id))
+      if not isEmptyString(custom_category) then
+	 res[tonumber(app_id)] = tonumber(custom_category)
+      end
+   end
+
+   return res
+end
+
+function initCustomnDPIProtoCategories()
+   for _, ifname in pairs(interface.getIfNames()) do
+      interface.select(ifname)
+      local custom = getCustomnDPIProtoCategories(ifname)
+
+      for app_id, cat_id in pairs(custom) do
+	 interface.setnDPIProtoCategory(app_id, cat_id)
+      end
+   end
+end
+
+function setCustomnDPIProtoCategory(if_name, app_id, new_cat_id)
+   interface.select(if_name)
+   interface.setnDPIProtoCategory(app_id, new_cat_id)
+
+   local ifid = getInterfaceId(if_name)
+   local key = getCustomnDPIProtoCategoriesKey(ifid)
+
+   ntop.setHashCache(key, tostring(app_id), tostring(new_cat_id));
+end
+
 function getHumanReadableInterfaceName(interface_name)
-   key = 'ntopng.prefs.'..interface_name..'.name'
-   custom_name = ntop.getCache(key)
+   local key = 'ntopng.prefs.'..interface_name..'.name'
+   local custom_name = ntop.getCache(key)
 
    if((custom_name ~= nil) and (custom_name ~= "")) then
       return(custom_name)
    else
       interface.select(interface_name)
-      _ifstats = interface.getStats()
+      local _ifstats = interface.getStats()
+
+      local nm = _ifstats.name
+      if(string.contains(nm, "{")) then -- Windows
+	 nm = _ifstats.description
+      end
 
       -- print(interface_name.."=".._ifstats.name)
-      return(_ifstats.name)
+      return(nm)
    end
 end
 
@@ -2022,7 +2314,7 @@ function harvestUnusedDir(path, min_epoch)
 
    for k,v in pairs(files) do
       if(v ~= nil) then
-	 local p = fixPath(path .. "/" .. v)
+	 local p = os_utils.fixPath(path .. "/" .. v)
 	 if(ntop.isdir(p)) then
 	    harvestUnusedDir(p, min_epoch)
 	 else
@@ -2046,10 +2338,10 @@ function harvestJSONTopTalkers(days)
       interface.select(ifname)
       local _ifstats = interface.getStats()
       local dirs = ntop.getDirs()
-      local basedir = fixPath(dirs.workingdir .. "/" .. _ifstats.id)
+      local basedir = os_utils.fixPath(dirs.workingdir .. "/" .. _ifstats.id)
 
-      harvestUnusedDir(fixPath(basedir .. "/top_talkers"), when)
-      harvestUnusedDir(fixPath(basedir .. "/flows"), when)
+      harvestUnusedDir(os_utils.fixPath(basedir .. "/top_talkers"), when)
+      harvestUnusedDir(os_utils.fixPath(basedir .. "/flows"), when)
    end
 end
 
@@ -2058,7 +2350,7 @@ end
 function isAdministrator()
    local user_group = ntop.getUserGroup()
 
-   if(user_group == "administrator") then
+   if(user_group == "administrator") or (user_group == "") then
       return(true)
    else
       return(false)
@@ -2135,10 +2427,12 @@ end
 -- split
 function split(s, delimiter)
    result = {};
-   for match in (s..delimiter):gmatch("(.-)"..delimiter) do
-      table.insert(result, match);
-    end
-    return result;
+   if(s ~= nil) then
+      for match in (s..delimiter):gmatch("(.-)"..delimiter) do
+	 table.insert(result, match);
+      end
+   end
+   return result;
 end
 
 -- startswith
@@ -2204,42 +2498,19 @@ function maxRateToString(max_rate)
 end
 
 function getPasswordInputPattern()
-  return [[^[\w\$\\!\/\(\)=\?\^\*@_\-\u0000-\u00ff]{5,}$]]
+  return [[^[\w\$\\!\/\(\)=\?\^\*@_\-\u0000-\u0019\u0021-\u00ff]{5,}$]]
 end
 
 function getIPv4Pattern()
   return "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
 end
 
-function getURLPattern()
-  return "^https?://.+$"
+function getMacPattern()
+  return "^([0-9a-fA-F][0-9a-fA-F]:){5}[0-9a-fA-F]{2}$"
 end
 
--- makeTopStatsScriptsArray
-function makeTopStatsScriptsArray()
-   path = dirs.installdir .. "/scripts/lua/modules/top_scripts"
-   path = fixPath(path)
-   local files = ntop.readdir(path)
-   topArray = {}
-
-   for k,v in pairs(files) do
-      if(string.ends(k, ".lua")) then
-	 if(v ~= nil) then
-	    value = {}
-	    fn,ext = v:match("([^.]+).([^.]+)")
-	    mod = require("top_scripts."..fn)
-	    if(type(mod) ~= type(true)) then
-	       value["name"] = mod.name
-	       value["script"] = mod.infoScript
-	       value["key"] = mod.infoScriptKey
-	       value["levels"] = mod.numLevels
-	       topArray[fn] = value
-	    end
-	 end
-      end
-   end
-
-   return(topArray)
+function getURLPattern()
+  return "^https?://.+$"
 end
 
 -- get_mac_classification
@@ -2295,7 +2566,7 @@ function get_symbolic_mac(mac_address, only_symbolic)
 	 local s = get_mac_classification(m)
 
 	 if(m == s) then
-	    return(get_mac_classification(m)..":"..t)
+	    return '<a href="' .. ntop.getHttpPrefix() .. '/lua/mac_details.lua?host='..mac_address..'">' .. get_mac_classification(m) .. ":" .. t .. '</a>'
 	 else
 	    if(only_symbolic == true) then
 	       return(get_mac_classification(m).."_"..t)
@@ -2421,18 +2692,22 @@ end
 
 -- Update Utils::flowstatus2str
 function getFlowStatus(status)
-  if(status == 0) then return("<font color=green>Normal</font>")
-  elseif(status == 1)  then return("<font color=orange>Slow TCP Connection</font>")
-  elseif(status == 2)  then return("<font color=orange>Slow Application Header</font>")
-  elseif(status == 3)  then return("<font color=orange>Slow Data Exchange (Slowloris?)</font>")
-  elseif(status == 4)  then return("<font color=orange>Low Goodput</font>")
-  elseif(status == 5)  then return("<font color=orange>Suspicious TCP SYN Probing (or server port down)</font>")
-  elseif(status == 6)  then return("<font color=orange>TCP Connection Issues (Retransmission, OOO, Lost)</font>")
-  elseif(status == 7)  then return("<font color=orange>Suspicious TCP Probing</font>")
-  elseif(status == 8)  then return("<font color=orange>Flow emitted when network interface was alerted</font>")
-  elseif(status == 9)  then return("<font color=orange>TCP connection refused</font>")
-  elseif(status == 10) then return("<font color=orange>SSL Certificate Mismatch</font>")
-  else return("<font color=orange>Unknown status ("..status..")</font>")
+  if(status == 0) then return("<font color=green>"..i18n("flow_details.normal").."</font>")
+  elseif(status == 1)  then return("<font color=orange>"..i18n("flow_details.slow_tcp_connection").."</font>")
+  elseif(status == 2)  then return("<font color=orange>"..i18n("flow_details.slow_application_header").."</font>")
+  elseif(status == 3)  then return("<font color=orange>"..i18n("flow_details.slow_data_exchange").."</font>")
+  elseif(status == 4)  then return("<font color=orange>"..i18n("flow_details.low_goodput").."</font>")
+  elseif(status == 5)  then return("<font color=orange>"..i18n("flow_details.suspicious_tcp_syn_probing").."</font>")
+  elseif(status == 6)  then return("<font color=orange>"..i18n("flow_details.tcp_connection_issues").."</font>")
+  elseif(status == 7)  then return("<font color=orange>"..i18n("flow_details.suspicious_tcp_probing").."</font>")
+  elseif(status == 8)  then return("<font color=orange>"..i18n("flow_details.flow_emitted").."</font>")
+  elseif(status == 9)  then return("<font color=orange>"..i18n("flow_details.tcp_connection_refused").."</font>")
+  elseif(status == 10) then return("<font color=orange>"..i18n("flow_details.ssl_certificate_mismatch").."</font>")
+  elseif(status == 11) then return("<font color=orange>"..i18n("flow_details.dns_invalid_query").."</font>")
+  elseif(status == 12) then return("<font color=orange>"..i18n("flow_details.remote_to_remote").."</font>")
+  elseif(status == 13) then return("<font color=orange>"..i18n("flow_details.blacklisted_flow").."</font>")
+  elseif(status == 14) then return(""..i18n("flow_details.flow_blocked_by_bridge").."")
+  else return("<font color=orange>"..i18n("flow_details.unknown_status",{status=status}).."</font>")
   end
 end
 
@@ -2488,90 +2763,90 @@ end
 -- ##########################################
 
 _icmp_types = {
-	 { 0, 0, "Echo Reply" },
-	 { 3, 0, "Network Unreachable" },
-	 { 3, 1, "Host Unreachable" },
-	 { 3, 2, "Protocol Unreachable" },
-	 { 3, 3, "Port Unreachable" },
-	 { 3, 4, "Fragmentation needed but no fragment bit set" },
-	 { 3, 5, "Source routing failed" },
-	 { 3, 6, "Destination network unknown" },
-	 { 3, 7, "Destination host unknown" },
-	 { 3, 8, "Source host isolated (obsolete)" },
-	 { 3, 9, "Destination network administratively prohibited" },
-	 { 3, 10, "Destination host administratively prohibited" },
-	 { 3, 11, "Network unreachable for TOS" },
-	 { 3, 12, "Host unreachable for TOS" },
-	 { 3, 13, "Communication administratively prohibited by filtering" },
-	 { 3, 14, "Host precedence violation" },
-	 { 3, 15, "Precedence cutoff in effect" },
-	 { 4, 0, "Source quench" },
-	 { 5, 0, "Redirect for network" },
-	 { 5, 1, "Redirect for host" },
-	 { 5, 2, "Redirect for TOS and network" },
-	 { 5, 3, "Redirect for TOS and host" },
-	 { 8, 0, "Echo request x" },
-	 { 9, 0, "Router advertisement" },
-	 { 10, 0, "Route solicitation" },
-	 { 11, 0, "TTL equals 0 during transit" },
-	 { 11, 1, "TTL equals 0 during reassembly" },
-	 { 12, 0, "IP header bad (catchall error)" },
-	 { 12, 1, "Required options missing" },
-	 { 13, 0, "Timestamp request (obsolete)" },
-	 { 14, 0, "Timestamp reply (obsolete)" },
-	 { 15, 0, "Information request (obsolete)" },
-	 { 16, 0, "Information reply (obsolete)" },
-	 { 17, 0, "Address mask request" },
-	 { 18, 0, "Address mask reply" }
+	 { 0, 0, i18n("icmp_v4_types.type_0_0_echo_reply") },
+	 { 3, 0, i18n("icmp_v4_types.type_3_0_network_unreachable") },
+	 { 3, 1, i18n("icmp_v4_types.type_3_1_host_unreachable") },
+	 { 3, 2, i18n("icmp_v4_types.type_3_2_protocol_unreachable") },
+	 { 3, 3, i18n("icmp_v4_types.type_3_3_port_unreachable") },
+	 { 3, 4, i18n("icmp_v4_types.type_3_4_fragmentation_needed_but_no_fragment_bit_set") },
+	 { 3, 5, i18n("icmp_v4_types.type_3_5_source_routing_failed") },
+	 { 3, 6, i18n("icmp_v4_types.type_3_6_destination_network_unknown") },
+	 { 3, 7, i18n("icmp_v4_types.type_3_7_destination_host_unknown") },
+	 { 3, 8, i18n("icmp_v4_types.type_3_8_source_host_isolated") },
+	 { 3, 9, i18n("icmp_v4_types.type_3_9_destination_network_administratively_prohibited") },
+	 { 3, 10, i18n("icmp_v4_types.type_3_10_destination_host_administratively_prohibited") },
+	 { 3, 11, i18n("icmp_v4_types.type_3_11_network_unreachable_for_tos") },
+	 { 3, 12, i18n("icmp_v4_types.type_3_12_host_unreachable_for_tos") },
+	 { 3, 13, i18n("icmp_v4_types.type_3_13_communication_administratively_prohibited_by_filtering") },
+	 { 3, 14, i18n("icmp_v4_types.type_3_14_host_precedence_violation") },
+	 { 3, 15, i18n("icmp_v4_types.type_3_15_precedence_cutoff_in_effect") },
+	 { 4, 0, i18n("icmp_v4_types.type_4_0_source_quench") },
+	 { 5, 0, i18n("icmp_v4_types.type_5_0_redirect_for_network") },
+	 { 5, 1, i18n("icmp_v4_types.type_5_1_redirect_for_host") },
+	 { 5, 2, i18n("icmp_v4_types.type_5_2_redirect_for_tos_and_network") },
+	 { 5, 3, i18n("icmp_v4_types.type_5_3_redirect_for_tos_and_host") },
+	 { 8, 0, i18n("icmp_v4_types.type_8_0_echo_request_x") },
+	 { 9, 0, i18n("icmp_v4_types.type_9_0_router_advertisement") },
+	 { 10, 0, i18n("icmp_v4_types.type_10_0_route_solicitation") },
+	 { 11, 0, i18n("icmp_v4_types.type_11_0_ttl_equals_0_during_transit") },
+	 { 11, 1, i18n("icmp_v4_types.type_11_1_ttl_equals_0_during_reassembly") },
+	 { 12, 0, i18n("icmp_v4_types.type_12_0_ip_header_bad") },
+	 { 12, 1, i18n("icmp_v4_types.type_12_1_required_options_missing") },
+	 { 13, 0, i18n("icmp_v4_types.type_13_0_timestamp_request") },
+	 { 14, 0, i18n("icmp_v4_types.type_14_0_timestamp_reply") },
+	 { 15, 0, i18n("icmp_v4_types.type_15_0_information_request") },
+	 { 16, 0, i18n("icmp_v4_types.type_16_0_information_reply") },
+	 { 17, 0, i18n("icmp_v4_types.type_17_0_address_mask_request") },
+	 { 18, 0, i18n("icmp_v4_types.type_18_0_address_mask_reply") }
 }
 
 -- Code is currently ignored on IVMPv6
 _icmpv6_types = {
-        { 0, "Reserved" },
-	{ 1, "Destination Unreachable" },
-	{ 2, "Packet Too Big" },
-	{ 3, "Time Exceeded" },
-	{ 4, "Parameter Problem" },
-	{ 100, "Private experimentation" },
-	{ 101, "Private experimentation" },
-	-- { 102-126, "Unassigned" },
-	{ 127, "Reserved for expansion of ICMPv6 error messages" },
-	{ 128, "Echo Request" },
-	{ 129, "Echo Reply" },
-	{ 130, "Multicast Listener Query" },
-	{ 131, "Multicast Listener Report" },
-	{ 132, "Multicast Listener Done" },
-	{ 133, "Router Solicitation" },
-	{ 134, "Router Advertisement" },
-	{ 135, "Neighbor Solicitation" },
-	{ 136, "Neighbor Advertisement" },
-	{ 137, "Redirect Message" },
-	{ 138, "Router Renumbering" },
-	{ 139, "ICMP Node Information Query" },
-	{ 140, "ICMP Node Information Response" },
-	{ 141, "Inverse Neighbor Discovery Solicitation Message" },
-	{ 142, "Inverse Neighbor Discovery Advertisement Message" },
-	{ 143, "Version 2 Multicast Listener Report" },
-	{ 144, "Home Agent Address Discovery Request Message" },
-	{ 145, "Home Agent Address Discovery Reply Message" },
-	{ 146, "Mobile Prefix Solicitation" },
-	{ 147, "Mobile Prefix Advertisement" },
-	{ 148, "Certification Path Solicitation Message" },
-	{ 149, "Certification Path Advertisement Message" },
-	{ 150, "ICMP messages utilized by experimental mobility protocols" },
-	{ 151, "Multicast Router Advertisement" },
-	{ 152, "Multicast Router Solicitation" },
-	{ 153, "Multicast Router Termination" },
-	{ 154, "FMIPv6 Messages" },
-	{ 155, "RPL Control Message" },
-	{ 156, "ILNPv6 Locator Update Message" },
-	{ 157, "Duplicate Address Request" },
-	{ 158, "Duplicate Address Confirmation" },
-	{ 159, "MPL Control Message" },
-	-- { 160-199, "Unassigned" },
-	{ 200, "Private experimentation" },
-	{ 201, "Private experimentation" },
-	{ 255, "Reserved for expansion of ICMPv6 informational messages" }
+        { 0, i18n("icmp_v6_types.type_0_reserved") },
+	{ 1, i18n("icmp_v6_types.type_1_destination_unreachable") },
+	{ 2, i18n("icmp_v6_types.type_2_packet_too_big") },
+	{ 3, i18n("icmp_v6_types.type_3_time_exceeded") },
+	{ 4, i18n("icmp_v6_types.type_4_parameter_problem") },
+	{ 100, i18n("icmp_v6_types.type_100_private_experimentation") },
+	{ 101, i18n("icmp_v6_types.type_101_private_experimentation") },
+	--{ 102-126, i18n("icmp_v6_types.type_102-126_unassigned") },
+	{ 127, i18n("icmp_v6_types.type_127_reserved_for_expansion_of_icmpv6_error_messages") },
+	{ 128, i18n("icmp_v6_types.type_128_echo_request") },
+	{ 129, i18n("icmp_v6_types.type_129_echo_reply") },
+	{ 130, i18n("icmp_v6_types.type_130_multicast_listener_query") },
+	{ 131, i18n("icmp_v6_types.type_131_multicast_listener_report") },
+	{ 132, i18n("icmp_v6_types.type_132_multicast_listener_done") },
+	{ 133, i18n("icmp_v6_types.type_133_router_solicitation") },
+	{ 134, i18n("icmp_v6_types.type_134_router_advertisement") },
+	{ 135, i18n("icmp_v6_types.type_135_neighbor_solicitation") },
+	{ 136, i18n("icmp_v6_types.type_136_neighbor_advertisement") },
+	{ 137, i18n("icmp_v6_types.type_137_redirect_message") },
+	{ 138, i18n("icmp_v6_types.type_138_router_renumbering") },
+	{ 139, i18n("icmp_v6_types.type_139_icmp_node_information_query") },
+	{ 140, i18n("icmp_v6_types.type_140_icmp_node_information_response") },
+	{ 141, i18n("icmp_v6_types.type_141_inverse_neighbor_discovery_solicitation_message") },
+	{ 142, i18n("icmp_v6_types.type_142_inverse_neighbor_discovery_advertisement_message") },
+	{ 143, i18n("icmp_v6_types.type_143_version_2_multicast_listener_report") },
+	{ 144, i18n("icmp_v6_types.type_144_home_agent_address_discovery_request_message") },
+	{ 145, i18n("icmp_v6_types.type_145_home_agent_address_discovery_reply_message") },
+	{ 146, i18n("icmp_v6_types.type_146_mobile_prefix_solicitation") },
+	{ 147, i18n("icmp_v6_types.type_147_mobile_prefix_advertisement") },
+	{ 148, i18n("icmp_v6_types.type_148_certification_path_solicitation_message") },
+	{ 149, i18n("icmp_v6_types.type_149_certification_path_advertisement_message") },
+	{ 150, i18n("icmp_v6_types.type_150_icmp_messages_utilized_by_experimental_mobility_protocols") },
+	{ 151, i18n("icmp_v6_types.type_151_multicast_router_advertisement") },
+	{ 152, i18n("icmp_v6_types.type_152_multicast_router_solicitation") },
+	{ 153, i18n("icmp_v6_types.type_153_multicast_router_termination") },
+	{ 154, i18n("icmp_v6_types.type_154_fmipv6_messages") },
+	{ 155, i18n("icmp_v6_types.type_155_rpl_control_message") },
+	{ 156, i18n("icmp_v6_types.type_156_ilnpv6_locator_update_message") },
+	{ 157, i18n("icmp_v6_types.type_157_duplicate_address_request") },
+	{ 158, i18n("icmp_v6_types.type_158_duplicate_address_confirmation") },
+	{ 159, i18n("icmp_v6_types.type_159_mpl_control_message") },
+	--{ 160-199, i18n("icmp_v6_types.type_160-199_unassigned") },
+	{ 200, i18n("icmp_v6_types.type_200_private_experimentation") },
+	{ 201, i18n("icmp_v6_types.type_201_private_experimentation") },
+	{ 255, i18n("icmp_v6_types.type_255_reserved_for_expansion_of_icmpv6_informational_messages") }
 }
 
 -- #############################################
@@ -2607,6 +2882,7 @@ end
 -- #############################################
 
 -- Add here the icons you guess based on the Mac address
+-- TODO move to discovery stuff
 local guess_icon_keys = {
   ["dell inc."] = "fa-desktop",
   ["vmware, inc."] = "fa-desktop",
@@ -2638,64 +2914,20 @@ function guessHostIcon(key)
    end
 end
 
--- #############################################
+-- ####################################################
 
-local icon_keys = {
-  [ ""] = "",
-  [ "Computer"] = "fa-desktop",
-  [ "Laptop"]   = "fa-laptop",
-  [ "Phone"]    = "fa-mobile",
-  [ "Tablet"]   = "fa-tablet",
-  [ "TV"]       = "fa-television",
-  [ "Printer"]  = "fa-print",
-  [ "Camera"]  = "fa-video-camera",
-  [ "Router"]  = "fa-arrows"
-}
+-- Functions to set/get a device type of user choice
 
-function getHostIcons()
-   return pairsByKeys(icon_keys, asc)
+local function getCustomDeviceKey(mac)
+   return "ntopng.prefs.device_types." .. string.upper(mac)
 end
 
-function getHostIconName(key)
-   local hash_key = "ntopng.host_icons"
-   local icon = ntop.getHashCache(hash_key, key)
-
-   if (icon == nil) then
-      icon = ""
-   end
-
-   return icon
+function getCustomDeviceType(mac)
+   return tonumber(ntop.getPref(getCustomDeviceKey(mac)))
 end
 
-function getHostIcon(key)
-  local icon = getHostIconName(key)
-  if((icon == nil) or (icon == "")) then
-     return(guessHostIcon(key))
-  else
-     return(" <i class='fa "..icon.." fa-lg'></i>")
-  end
-end
-
-function setHostIcon(key, icon)
-  ntop.setHashCache("ntopng.host_icons", key, icon)
-end
-
-function pickIcon(key, alt_key)
-  local icon = getHostIconName(key)
-  if (isEmptyString(icon) and (alt_key ~= nil)) then
-    icon = getHostIconName(alt_key)
-  end
-
-print [[<div class="form-group"><select name="custom_icon" class="form-control">]]
-
-  for k,v in getHostIcons() do
-      print("<option value=\"".. v.."\"")
-      if(v == icon) then print(" selected") end
-      print(">".. k .."</option>")
-  end
-
-print [[</select></div>]]
-
+function setCustomDeviceType(mac, device_type)
+   ntop.setPref(getCustomDeviceKey(mac), tostring(device_type))
 end
 
 -- ####################################################
@@ -2707,43 +2939,29 @@ end
 
 -- ####################################################
 
--- Compute the difference in seconds between local time and UTC.
-local function get_timezone()
-   local now = os.time()
-   return os.difftime(now, os.time(os.date("!*t", now)))
-end
-
-local function get_tzoffset(timezone)
-   local h, m = math.modf(timezone / 3600)
-   return string.format("%+.4d", 100 * h + 60 * m)
-end
-
-function get_timezone_offset()
-   local ts = get_tzoffset(get_timezone())
-   local utcdate   = os.date("!*t", ts)
-   local localdate = os.date("*t", ts)
-   localdate.isdst = false -- this is the trick
-   return os.difftime(os.time(localdate), os.time(utcdate))
-end
-
-function format_time(timestamp, format, tzoffset)
-   if tzoffset == "local" then  -- calculate local time zone (for the server)
-      local now = os.time()
-      local local_t = os.date("*t", now)
-      local utc_t = os.date("!*t", now)
-      local delta = (local_t.hour - utc_t.hour)*60 + (local_t.min - utc_t.min)
-      local h, m = math.modf( delta / 60)
-      tzoffset = string.format("%+.4d", 100 * h + 60 * m)
-   end
-
-   return os.date(format, timestamp + tzoffset)
-end
-
-function makeTimeStamp(d)
+function makeTimeStamp(d, tzoffset)
+   -- tzoffset is the timezone difference between UTC and Local Time in the browser
    local pattern = "(%d+)%/(%d+)%/(%d+) (%d+):(%d+):(%d+)"
    local day,month, year, hour, minute, seconds = string.match(d, pattern);
 
    local timestamp = os.time({year=year, month=month, day=day, hour=hour, min=minute, sec=seconds});
+
+   -- tprint("pre-timestamp is:"..timestamp)
+   if tzoffset then
+      -- from browser local time to UTC
+      timestamp = timestamp - (tzoffset or 0)
+
+      -- from UTC to machine local time
+      local now = os.time()
+      local local_t = os.date("*t", now)
+      local utc_t = os.date("!*t", now)
+      local delta = (local_t.hour - utc_t.hour)*60 + (local_t.min - utc_t.min)
+      delta = delta * 60 -- to seconds
+
+      timestamp = timestamp + (delta or 0)
+      -- tprint("delta: "..delta.." tzoffset is: "..tzoffset)
+      -- tprint("post-timestamp is:"..timestamp)
+   end
 
    return timestamp.."";
 end
@@ -2835,17 +3053,45 @@ function table.merge(a, b)
   return merged
 end
 
-function table.clone(t, filter)
-   local clone = {}
-   local filter = filter or function (k, v) return true end
+function table.clone(orig)
+   local orig_type = type(orig)
+   local copy
 
-   for k, v in pairs(t) do
-      if filter(k, v) then
-         clone[k] = v
+   if orig_type == 'table' then
+      copy = {}
+      for orig_key, orig_value in next, orig, nil do
+         copy[table.clone(orig_key)] = table.clone(orig_value)
       end
+      setmetatable(copy, table.clone(getmetatable(orig)))
+   else -- number, string, boolean, etc
+      copy = orig
    end
 
-   return clone
+   return copy
+end
+
+-- From http://lua-users.org/lists/lua-l/2014-09/msg00421.html
+-- Returns true if tables are equal
+function table.compare(t1, t2, ignore_mt)
+  local ty1 = type(t1)
+  local ty2 = type(t2)
+
+  if ty1 ~= ty2 then return false end
+  if ty1 ~= 'table' and ty2 ~= 'table' then return t1 == t2 end
+  local mt = getmetatable(t1)
+  if not ignore_mt and mt and mt.__eq then return t1 == t2 end
+
+  for k1,v1 in pairs(t1) do
+      local v2 = t2[k1]
+      if v2 == nil or not table.compare(v1, v2) then return false end
+  end
+
+  for k2,v2 in pairs(t2) do
+      local v1 = t1[k2]
+      if v1 == nil or not table.compare(v1, v2) then return false end
+  end
+
+  return true
 end
 
 function toboolean(s)
@@ -2900,10 +3146,10 @@ FMT_TO_DATA_BYTES = {
 }
 
 FMT_TO_DATA_TIME = {
-  ["s"] = {label="Secs",  value=1},
-  ["m"] = {label="Mins",  value=60},
-  ["h"] = {label="Hours", value=3600},
-  ["d"] = {label="Days",  value=3600*24},
+  ["s"] = {label=i18n("metrics.secs"),  value=1},
+  ["m"] = {label=i18n("metrics.mins"),  value=60},
+  ["h"] = {label=i18n("metrics.hours"), value=3600},
+  ["d"] = {label=i18n("metrics.days"),  value=3600*24},
 }
 
 -- ###########################################
@@ -3027,7 +3273,7 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra)
       function resol_selector_on_form_submit(event) {
         var form = $(this);
 
-        if (event.isDefaultPrevented())   /* isDefaultPrevented is true when the form is invalid */
+        if (event.isDefaultPrevented() || (form.find(".has-error").length > 0))
           return false;
 
         resol_selector_finalize(form);
@@ -3122,7 +3368,7 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra)
   js_specific_code = string.gsub(js_specific_code, "\n", "")
 
   if tonumber(value) ~= nil then
-    -- returns the new value with selected resolution
+     -- returns the new value with selected resolution
     return {html=html, init=js_init_code, js=js_specific_code, value=tonumber(value) / fmt_to_data[selected].value}
   else
     return {html=html, init=js_init_code, js=js_specific_code, value=nil}
@@ -3161,12 +3407,32 @@ function paramsPairsDecode(params, strict_mode)
 end
 
 function isBridgeInterface(ifstats)
-  return (ifstats["bridge.device_a"] ~= nil) and (ifstats["bridge.device_b"] ~= nil)
+  return ifstats.inline
+end
+
+function hasBridgeInterfaces(skip_netfilter)
+  local curif = ifname
+  local ifnames = interface.getIfNames()
+  local found = false
+
+  for _,ifname in pairs(ifnames) do
+    interface.select(ifname)
+
+    local ifstats = interface.getStats()
+    if isBridgeInterface(ifstats)
+        and (skip_netfilter~=true or ifstats.type ~= "netfilter") then
+      found = true
+      break
+    end
+  end
+
+  interface.select(curif)
+  return found
 end
 
 -- Returns true if the captive portal can be started with the current configuration
 function isCaptivePortalSupported(ifstats, prefs, skip_interface_check)
-   if not ntop.isEnterprise() then
+   if not ntop.isEnterprise() and not ntop.isnEdge() then
       return false
    end
 
@@ -3212,8 +3478,8 @@ function getCaptivePortalUsers()
   return users
 end
 
-function getBridgeInitializedKey()
-  return "ntopng.prefs.bridge_initialized"
+function getBridgeInitializedKey(ifid)
+  return "ntopng.prefs.iface_"..ifid..".bridge_initialized"
 end
 
 function hasSnmpDevices(ifid)
@@ -3257,6 +3523,53 @@ end
 
 function getSafeChildIcon()
    return("&nbsp;<font color='#5cb85c'><i class='fa fa-lg fa-child' aria-hidden='true'></i></font>")
+end
+
+-- ###########################################
+
+function printntopngRelease(info)
+   if(info["version.enterprise_edition"]) then
+   print(" Enterprise")
+   elseif(info["pro.release"]) then
+      print(" Professional")
+   else
+      print(" Community")
+   end
+
+   if(info["version.embedded_edition"] == true) then
+      print("/Embedded")
+   end
+
+   print(" Edition</td></tr>\n")
+end
+
+-- ###########################################
+
+-- avoids manual HTTP prefix and /lua concatenation
+function page_url(path)
+  return ntop.getHttpPrefix().."/lua/"..path
+end
+
+-- extracts a page url from the path
+function path_get_page(path)
+   local prefix = ntop.getHttpPrefix() .. "/lua/"
+
+   if string.find(path, prefix) == 1 then
+      return string.sub(path, string.len(prefix) + 1)
+   end
+
+   return path
+end
+
+-- ###########################################
+
+function printWarningAlert(message)
+   print[[<div class="alert alert-warning alert-dismissable" role="alert">]]
+   print[[<a class="close" data-dismiss="alert" aria-label="close">&times;</a>]]
+   print[[<i class="fa fa-warning fa-sm"></i> ]]
+   print[[<strong>]] print(i18n("warning")) print[[</strong> ]]
+   print(message)
+   print[[</div>]]
 end
 
 -- ###########################################

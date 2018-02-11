@@ -25,7 +25,12 @@
 #include <uuid/uuid.h>
 #endif
 
+#ifndef HAVE_NEDGE
+
 /* **************************************************** */
+
+static pthread_key_t pcap_t_key;
+static pthread_once_t pcap_t_key_once = PTHREAD_ONCE_INIT;
 
 PcapInterface::PcapInterface(const char *name) : NetworkInterface(name) {
   char pcap_error_buffer[PCAP_ERRBUF_SIZE];
@@ -58,6 +63,9 @@ PcapInterface::PcapInterface(const char *name) : NetworkInterface(name) {
 	ifname = strdup(&slash[1]);
 	free(old);
       }
+
+      /* Re-reading prefs as name has changed */
+      loadDumpPrefs();
       
       ntop->getTrace()->traceEvent(TRACE_NORMAL, "Reading packets from pcap file %s...", ifname);
       read_pkts_from_pcap_dump = true, purge_idle_flows_hosts = false;      
@@ -66,7 +74,7 @@ PcapInterface::PcapInterface(const char *name) : NetworkInterface(name) {
   } else {
     pcap_handle = pcap_open_live(ifname, ntop->getGlobals()->getSnaplen(),
 				 ntop->getPrefs()->use_promiscuous(),
-				 500, pcap_error_buffer);  
+				 1000 /* 1 sec */, pcap_error_buffer);  
 
     if(pcap_handle) {
       char *bl = strrchr(ifname, 
@@ -110,6 +118,21 @@ PcapInterface::~PcapInterface() {
 
 /* **************************************************** */
 
+/*
+ * NOTE: we must call pcap_breakloop in the same thread of pcap_next_ex.
+ * See https://www.tcpdump.org/manpages/pcap_breakloop.3pcap.html
+ */
+static void term_loop_handler(int signo) {
+  pcap_t *handle;
+
+  if ((handle = (pcap_t*)pthread_getspecific(pcap_t_key)))
+    pcap_breakloop(handle);
+}
+
+static void make_key_once() {
+  pthread_key_create(&pcap_t_key, NULL);
+}
+
 static void* packetPollLoop(void* ptr) {
   PcapInterface *iface = (PcapInterface*)ptr;
   pcap_t  *pd;
@@ -152,7 +175,14 @@ static void* packetPollLoop(void* ptr) {
     }
 
     pd = iface->get_pcap_handle();
-    
+
+    if(pd) {
+      pthread_once(&pcap_t_key_once, make_key_once);
+      pthread_setspecific(pcap_t_key, pd);
+    }
+
+    signal(SIGTERM, term_loop_handler);
+
     while((pd != NULL) 
 	  && iface->isRunning() 
 	  && (!ntop->getGlobals()->isShutdown())) {
@@ -163,7 +193,7 @@ static void* packetPollLoop(void* ptr) {
       while(iface->idle()) { iface->purgeIdle(time(NULL)); sleep(1); }
 
       if((rc = pcap_next_ex(pd, &hdr, &pkt)) > 0) {
-	if((rc > 0) && (pkt != NULL) && (hdr->caplen > 0)) {
+	if((pkt != NULL) && (hdr->caplen > 0)) {
 	  u_int16_t p;
 	  Host *srcHost = NULL, *dstHost = NULL;
 	  Flow *flow = NULL;
@@ -183,10 +213,14 @@ static void* packetPollLoop(void* ptr) {
 	  hdr_copy.len = min(hdr->len, sizeof(pkt_copy) - 1);
 	  hdr_copy.caplen = min(hdr_copy.len, hdr_copy.caplen);
 	  memcpy(pkt_copy, pkt, hdr_copy.len);
-	  iface->dissectPacket(&hdr_copy, (const u_char*)pkt_copy, &p, &srcHost, &dstHost, &flow);
+	  iface->dissectPacket(DUMMY_BRIDGE_INTERFACE_ID,
+			       true /* ingress - TODO: see if we pass the real packet direction */,
+			       NULL, &hdr_copy, (const u_char*)pkt_copy, &p, &srcHost, &dstHost, &flow);
 #else
 	  hdr->caplen = min_val(hdr->caplen, iface->getMTU());
-	  iface->dissectPacket(0, hdr, pkt, &p, &srcHost, &dstHost, &flow);
+	  iface->dissectPacket(DUMMY_BRIDGE_INTERFACE_ID,
+			       true /* ingress - TODO: see if we pass the real packet direction */,
+			       NULL, hdr, pkt, &p, &srcHost, &dstHost, &flow);
 #endif
 	}
       } else if(rc < 0) {
@@ -222,7 +256,7 @@ void PcapInterface::shutdown() {
     void *res;
 
     NetworkInterface::shutdown();
-    if(pcap_handle) pcap_breakloop(pcap_handle);
+    pthread_kill(pollLoop, SIGTERM);
     pthread_join(pollLoop, &res);
   }
 }
@@ -257,3 +291,5 @@ bool PcapInterface::set_packet_filter(char *filter) {
     return(true);
   }
 };
+
+#endif

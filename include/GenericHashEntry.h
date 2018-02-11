@@ -36,16 +36,15 @@ class GenericHashEntry {
   GenericHashEntry *hash_next; /**< Pointer of next hash entry.*/
 
  protected:
-  u_int16_t num_uses;
-  bool will_be_purged; /**< Mark this host as candidate for purging.*/
-  time_t first_seen;   /**< Time of first seen.*/
-  time_t last_seen;    /**< Time of last seen.*/
-  NetworkInterface *iface; /**< Pointer of network interface.*/
+  u_int32_t num_uses;  /* Don't use 16 bits as we might run out of space on large networks with MACs, VLANs etc. */
+  bool will_be_purged; /**< Mark this host as candidate for purging. */
+  time_t first_seen;   /**< Time of first seen. */
+  time_t last_seen;    /**< Time of last seen. */
+  NetworkInterface *iface; /**< Pointer of network interface. */
 
   virtual bool isIdle(u_int max_idleness);
-
  public:
-   /**
+  /**
     * @brief A Constructor
     * @details Creating a new GenericHashEntry.
     * 
@@ -93,9 +92,10 @@ class GenericHashEntry {
   bool equal(GenericHashEntry *b)    { return((this == b) ? true : false); };  
   inline NetworkInterface* getInterface() { return(iface); };
   virtual bool idle();
-  inline u_int get_duration()         { return((u_int)(1+last_seen-first_seen)); };
-  inline void set_to_purge()          { will_be_purged = true; };
+  virtual void set_to_purge()          { will_be_purged = true; };
+  virtual void housekeep()             { return;                };
   inline bool is_ready_to_be_purged() { return(will_be_purged); };
+  inline u_int get_duration()         { return((u_int)(1+last_seen-first_seen)); };
   virtual u_int32_t key()             { return(0);         };  
   virtual char* get_string_key(char *buf, u_int buf_len) { buf[0] = '\0'; return(buf); };
   void incUses()      { num_uses++;      }

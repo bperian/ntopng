@@ -57,7 +57,7 @@ function getParams(url) {
 }
 
 /* adds a CSS style to replace the / in the breadcrumb */
-var style = $('<style>#search-criteria:before {content:"]] print(i18n("db_explorer.observation_period")) print[[:";}</style>');
+var style = $("<style>#search-criteria:before {content:\"]] print(i18n("db_explorer.observation_period")) print[[:\";}</style>");
 $('html > head').append(style);
 function addObservationPeriodToBreadCrumb(params_url, breadcrumb_id){
   var params = getParams(params_url);
@@ -91,11 +91,15 @@ function buildRequestData(source_div_id){
   var l7_proto_id = $('#' + source_div_id).attr("l7_proto_id");
   var l4_proto_id = $('#' + source_div_id).attr("l4_proto_id");
   var port = $('#' + source_div_id).attr("port");
+  var vlan = $('#' + source_div_id).attr("vlan");
+  var profile = $('#' + source_div_id).attr("profile");
   var res = {epoch_begin: epoch_begin, epoch_end: epoch_end};
   if (typeof ifId != 'undefined') res.ifid = ifId;
   if (typeof host != 'undefined') res.peer1 = host;
   if (typeof peer != 'undefined') res.peer2 = peer;
   if (typeof port != 'undefined') res.port = port;
+  if (typeof vlan != 'undefined') res.vlan = vlan;
+  if (typeof profile != 'undefined') res.profile = profile;
   if (typeof l7_proto_id != 'undefined'){
     res.l7_proto_id = l7_proto_id;
     res.l7proto = l7_proto_id;
@@ -133,6 +137,49 @@ function removeFromFavourites(source_div_id, stats_type, favourite_type, select_
   });
 }
 
+var zoom_vals = {
+]]
+
+if zoom_vals ~= nil then
+  for _, zv in pairs(zoom_vals) do
+     print('"'..zv[1]..'": '..zv[3]..', ')
+  end
+end
+print[[
+};
+console.log(zoom_vals);
+
+function populateHistoricalDbExplorerLink(the_td, host, l7_proto) {
+  var url_params = getParams(window.location.href);
+  var mandatory_params = ["host", "l4proto", "port", "info", "protocol", "search"];
+  $.each(mandatory_params, function(_, p) {
+    if(url_params[p] === undefined) {
+      url_params[p] = "";
+    }
+  });
+
+  if(host != '' && host !== undefined) {
+    url_params["host"] = host;
+  }
+  if(l7_proto != '' && l7_proto !== undefined) {
+    url_params["protocol"] = l7_proto;
+  }
+
+  if(url_params["zoom"]) { /* This is a chart url */
+    var zoom = url_params["zoom"];
+    var epoch = url_params["epoch"];
+    if(epoch === undefined) {
+      url_params["epoch_end"] = Math.round(new Date() / 1000); /* now */
+      url_params["epoch_begin"] = url_params["epoch_end"] - zoom_vals[zoom];
+    } else {
+      epoch = parseInt(epoch);
+      url_params["epoch_end"] = epoch + zoom_vals[zoom] / 2;
+      url_params["epoch_begin"] = epoch - zoom_vals[zoom] / 2;
+    }
+  }
+
+  the_td.html('<a href="]]print(ntop.getHttpPrefix())print[[/lua/pro/db_explorer.lua?' + decodeURIComponent($.param(url_params)) + '"><i>' + the_td.text() + '</i></a>');
+}
 
 function populateFavourites(source_div_id, stats_type, favourite_type, select_id){
   var multival_separator = " <---> ";
@@ -380,8 +427,9 @@ function printFlowsCountColumn()
    return col
 end
 
-function historicalTopTalkersTable(ifid, epoch_begin, epoch_end, host, l7proto, l4proto, port)
+function historicalTopTalkersTable(ifid, epoch_begin, epoch_end, host, l7proto, l4proto, port, vlan, profile)
    local breadcrumb_root = "interface"
+   local container_params = ' epoch_begin="" epoch_end="" host="" peer="" l7_proto_id="" l7_proto="" l4_proto_id="" l4_proto="" '
    local host_talkers_url_params = ""
    local interface_talkers_url_params = ""
    local isv6 = isIPv6Address(host)
@@ -413,6 +461,18 @@ function historicalTopTalkersTable(ifid, epoch_begin, epoch_end, host, l7proto, 
       interface_talkers_url_params = interface_talkers_url_params.."&port="..tonumber(port)
    end
 
+   if vlan ~= "" and vlan ~= nil and tonumber(vlan) ~= nil then
+      interface_talkers_url_params = interface_talkers_url_params.."&vlan="..tostring(vlan)
+      container_params = container_params..' vlan="'..(tostring(vlan) or '')..'"'
+   else
+      container_params = container_params..' vlan=0 '
+   end
+
+   if profile ~= "" and profile ~= nil then
+      interface_talkers_url_params = interface_talkers_url_params.."&profile="..profile
+      container_params = container_params..' profile="'..(profile or '')..'"'
+   end
+
    if host and host ~= "" then
       host_talkers_url_params = interface_talkers_url_params.."&peer1="..host
       breadcrumb_root = "host"
@@ -431,7 +491,7 @@ function historicalTopTalkersTable(ifid, epoch_begin, epoch_end, host, l7proto, 
 
 
 <!-- attach some status information to the historical container -->
-<div id="historical-container" epoch_begin="" epoch_end="" host="" peer="" l7_proto_id="" l7_proto="" l4_proto_id="" l4_proto="">
+<div id="historical-container" ]] print(container_params) print[[>
 
 
   <div class="row">
@@ -587,7 +647,11 @@ var populateInterfaceTopTalkersTable = function(){
 	  var addr_td = $("td:eq(1)", row[0]);
 	  var label_td = $("td:eq(0)", row[0]);
 	  var addr = addr_td.text();
+
+          populateHistoricalDbExplorerLink(label_td, addr);
+
 	  label_td.append('&nbsp;<a onclick="populateHostTopTalkersTable(\'' + addr +'\');"><i class="fa fa-pie-chart" title="]] print(i18n("db_explorer.talkers_with_this_host")) print[["></i></a>');
+
 	  return row;
 	},
 	columns:
@@ -640,6 +704,9 @@ var populateHostTopTalkersTable = function(host){
 	  var addr_td = $("td:eq(1)", row[0]);
 	  var label_td = $("td:eq(0)", row[0]);
 	  var addr = addr_td.text();
+
+          populateHistoricalDbExplorerLink(label_td, addr);
+
 	  label_td.append('&nbsp;<a onclick="populateAppsPerHostsPairTable(\'' + host +'\',\'' + addr +'\');"><i class="fa fa-exchange" title="]] print(i18n("db_explorer.applications_between", {peer1="' + host + '", peer2="' + addr + '"})) print[["></i></a>');
 	  return row;
 	},
@@ -704,6 +771,9 @@ var populateAppsPerHostsPairTable = function(peer1, peer2){
 	  var label = label_td.text();
 	  var l7_proto_id = l7_proto_id_td.text();
           var num_flows = parseInt($("td:eq(4)", row[0]).text().replace(/[^0-9]/g, ''));
+
+          populateHistoricalDbExplorerLink(label_td, '', l7_proto_id);
+
 	  label_td.append('&nbsp;<a onclick="populateFlowsPerHostsPairTable(\'' + peer1 +'\',\'' + peer2 +'\',\'' + l7_proto_id +'\',\'' + num_flows +'\');"><i class="fa fa-tasks" title="]] print(i18n("db_explorer.app_flows_between", {app="' + label + '", peer1="' + peer1 + '", peer2="' + peer2 + '"})) print[["></i></a>');
 	  return row;
 	},
@@ -837,12 +907,27 @@ end
 ]]
 end
 
-function historicalTopApplicationsTable(ifid, epoch_begin, epoch_end, host)
+function historicalTopApplicationsTable(ifid, epoch_begin, epoch_end, host, vlan, profile)
    local breadcrumb_root = "interface"
+   local container_params = ' epoch_begin="" epoch_end="" host="" peer="" l7_proto_id="" l7_proto="" l4_proto_id="" l4_proto="" '
    local top_apps_url_params=""
    local isv6 = isIPv6Address(host)
+
    top_apps_url_params = top_apps_url_params.."&epoch_begin="..epoch_begin
    top_apps_url_params = top_apps_url_params.."&epoch_end="..epoch_end
+   
+   if vlan ~= "" and vlan ~= nil and tonumber(vlan) ~= nil then
+      top_apps_url_params = top_apps_url_params.."&vlan="..tostring(vlan)
+      container_params = container_params..' vlan="'..(tostring(vlan) or '')..'"'
+   else
+      container_params = container_params..' vlan=0 '
+   end
+
+   if profile ~= "" and profile ~= nil then
+      top_apps_url_params = top_apps_url_params.."&profile="..profile
+      container_params = container_params..' profile="'..(profile or '')..'"'
+   end
+
    if host and host ~= "" then
       breadcrumb_root="host"
    end
@@ -855,8 +940,7 @@ function historicalTopApplicationsTable(ifid, epoch_begin, epoch_end, host)
 <ol class="breadcrumb" id="bc-apps" style="margin-bottom: 5px;"]] print('root="'..breadcrumb_root..'"') print [[>
 </ol>
 
-<div id="historical-apps-container" epoch_begin="" epoch_end="" host="" peer="" l7_proto_id="" l7_proto="" l4_proto_id="" l4_proto="">
-
+<div id="historical-apps-container" ]] print(container_params) print[[>
 
   <div class="row">
     <div class="form-group">
@@ -883,7 +967,7 @@ function historicalTopApplicationsTable(ifid, epoch_begin, epoch_end, host)
   <div id="flows-per-pair-by-app-container"> </div>
 </div>
 
-]] historicalDownloadButtonsBar("pcap-button-top-protocols", "historical-apps-container", not(isv6), isv) print [[
+]] historicalDownloadButtonsBar("pcap-button-top-protocols", "historical-apps-container", not(isv6), isv6) print [[
 
 <script type="text/javascript">
 var totalRows = -1;
@@ -991,6 +1075,9 @@ print [[
 	var proto_label_td = $("td:eq(1)", row[0]);
 	var proto_id = proto_id_td.text();
 	var proto_label = proto_label_td.text();
+
+        populateHistoricalDbExplorerLink(proto_label_td, '', proto_id);
+
 	proto_label_td.append('&nbsp;<a onclick="$(\'#historical-apps-container\').attr(\'l7_proto_id\', \'' + proto_id + '\');$(\'#historical-apps-container\').attr(\'l7_proto\', \'' + proto_label + '\');populateAppTopTalkersTable(\'' + proto_id +'\');"><i class="fa fa-pie-chart" title="]] print(i18n("db_explorer.get_proto_talkers")) print[["></i></a>');
 	  return row;
 	},
@@ -1070,6 +1157,9 @@ var populateAppTopTalkersTable = function(proto_id){
 	  var addr_td = $("td:eq(1)", row[0]);
 	  var label_td = $("td:eq(0)", row[0]);
 	  var addr = addr_td.text();
+
+          populateHistoricalDbExplorerLink(label_td, addr, proto_id);
+
 	  label_td.append('&nbsp;<a onclick="populatePeersPerHostByApplication(\'' + addr +'\',\'' + proto_id +'\');"><i class="fa fa-exchange" title="]] print(i18n("db_explorer.app_talkers_with", {app="' + app + '", peer="' + addr +'"})) print[["></i></a>');
 	  return row;
 	},
@@ -1127,6 +1217,9 @@ var populatePeersPerHostByApplication = function(host, proto_id){
 	  var addr_td = $("td:eq(1)", row[0]);
 	  var label_td = $("td:eq(0)", row[0]);
 	  var addr = addr_td.text();
+
+          populateHistoricalDbExplorerLink(label_td, addr);
+
           var num_flows = parseInt($("td:eq(6)", row[0]).text().replace(/[^0-9]/g, ''));
           label_td.append('&nbsp;<a onclick="$(\'#historical-apps-container\').attr(\'l7_proto_id\', \'' + proto_id + '\');populateFlowsPerHostPairByApplicationTable(\'' + host +'\',\'' + addr + '\',\'' + proto_id + '\',\'' + num_flows +'\');"><i class="fa fa-tasks" title="]] print(i18n("db_explorer.protocol_flows_between", {proto="' + $(\"#historical-apps-container\").attr(\"l7_proto\") + '", peer1="' + host + '", peer2="' + addr + '"})) print[["></i></a>');
 	  return row;
@@ -1258,6 +1351,9 @@ print [[
 	var proto_id = proto_id_td.text();
 	var proto_label = proto_label_td.text();
         var num_flows = parseInt($("td:eq(4)", row[0]).text().replace(/[^0-9]/g, ''));
+
+        populateHistoricalDbExplorerLink(proto_label_td, '', proto_id);
+
 	proto_label_td.append('&nbsp;<a onclick="$(\'#historical-apps-container\').attr(\'l7_proto_id\', \'' + proto_id + '\');$(\'#historical-apps-container\').attr(\'l7_proto\', \'' + proto_label + '\');populatePeersPerHostByApplication(\'' + host +'\',\'' + proto_id +'\');"><i class="fa fa-exchange" title="]] print(i18n("db_explorer.hosts_talking_proto_with", {proto="' + proto_id + '", host="' + host + '"})) print[["></i></a>');
 	  return row;
 	},
@@ -1448,7 +1544,7 @@ end
 
 -- ##########################################
 
-function historicalFlowsTab(ifId, host, epoch_begin, epoch_end, l7proto, l4proto, port, info)
+function historicalFlowsTab(ifId, host, epoch_begin, epoch_end, l7proto, l4proto, port, info, vlan, profile)
    -- prepare some attributes that will be attached to divs
    local div_data = ""
 
@@ -1489,6 +1585,14 @@ function historicalFlowsTab(ifId, host, epoch_begin, epoch_end, l7proto, l4proto
       _GET["port"] = port
       div_data = div_data..' port="'..port..'" '
    end
+   if vlan ~= "" and vlan ~= nil then
+      _GET["vlan"] = vlan
+      div_data = div_data..' vlan="'..vlan..'" '
+   end
+   if profile ~= "" and profile ~= nil then
+      _GET["profile"] = profile
+      div_data = div_data..' profile="'..profile..'" '
+   end
 
    print[[
 
@@ -1498,8 +1602,8 @@ function historicalFlowsTab(ifId, host, epoch_begin, epoch_end, l7proto, l4proto
     <li class="active"> <a href="#historical-flows-summary" role="tab" data-toggle="tab"> ]] print(i18n("db_explorer.summary")) print[[ </a> </li>
 ]]
 
-   print '<li> <a href="#tab-ipv4" role="tab"> ' print(i18n("ipv4")) print' </a> </li>'
-   print '<li> <a href="#tab-ipv6" role="tab"> ' print(i18n("ipv6")) print' </a> </li>'
+   print '<li id="tab-ipv4-li" style="display: none;"> <a href="#tab-ipv4" role="tab"> ' print(i18n("ipv4")) print' </a> </li>'
+   print '<li id="tab-ipv6-li" style="display: none;"> <a href="#tab-ipv6" role="tab"> ' print(i18n("ipv6")) print' </a> </li>'
 
 print [[
   </ul>
@@ -1620,8 +1724,20 @@ print[[
       $("#tab-ipv4").attr("num_flows", msg.count.IPv4.tot_flows)
       $("#tab-ipv6").attr("num_flows", msg.count.IPv6.tot_flows)
 
+      // show tabs only if they have results
+      if(msg.count.IPv4.tot_bytes > 0) {
+        $("#tab-ipv4-li").show();
+      }
+      if(msg.count.IPv6.tot_bytes > 0) {
+        $("#tab-ipv6-li").show();
+      }
+
       var tr=""
       $.each(msg.count, function(ipvers, item){
+        if(item.tot_bytes <= 0) {
+          return true; // continue
+        }
+
         tr += "<tr><th>" + ipvers + "</th>"
 ]]
 
@@ -1659,14 +1775,14 @@ print[[
 
 </script>
 ]]
-historicalFlowsTabTables(ifId, host, epoch_begin, epoch_end, l7proto, l4proto, port, info)
+historicalFlowsTabTables(ifId, host, epoch_begin, epoch_end, l7proto, l4proto, port, info, vlan, profile)
 
 end
 
 -- ##########################################
 
-function historicalFlowsTabTables(ifId, host, epoch_begin, epoch_end, l7proto, l4proto, port, info)
-   local url_update = ntop.getHttpPrefix().."/lua/get_db_flows.lua?ifid="..ifId.. "&peer1="..(host or '') .. "&epoch_begin="..(epoch_begin or '').."&epoch_end="..(epoch_end or '').."&l4proto="..(l4proto or '').."&port="..(port or '').."&info="..(info or '')
+function historicalFlowsTabTables(ifId, host, epoch_begin, epoch_end, l7proto, l4proto, port, info, vlan, profile)
+   local url_update = ntop.getHttpPrefix().."/lua/get_db_flows.lua?ifid="..ifId.. "&peer1="..(host or '') .. "&epoch_begin="..(epoch_begin or '').."&epoch_end="..(epoch_end or '').."&l4proto="..(l4proto or '').."&port="..(port or '').."&info="..(info or '').."&vlan="..(vlan or '').."&profile="..(profile or '')
 
    if(l7proto ~= "") then
       if(not(isnumber(l7proto))) then

@@ -29,23 +29,34 @@ Prefs::Prefs(Ntop *_ntop) {
   ntop = _ntop, sticky_hosts = location_none, simulate_vlans = false;
   local_networks = strdup(CONST_DEFAULT_HOME_NET "," CONST_DEFAULT_LOCAL_NETS);
   local_networks_set = false, shutdown_when_done = false;
-  safe_search_dns_ip = inet_addr((char*)DEFAULT_SAFE_SEARCH_DNS);
-  redirection_url = strdup(DEFAULT_REDIRECTION_URL);
-  global_primary_dns_ip = global_secondary_dns_ip = 0; /* No DNS */
   enable_users_login = true, disable_localhost_login = false;
   enable_dns_resolution = sniff_dns_responses = true, use_promiscuous_mode = true;
   resolve_all_host_ip = false, online_license_check = false;
   max_num_hosts = MAX_NUM_INTERFACE_HOSTS, max_num_flows = MAX_NUM_INTERFACE_HOSTS;
   attacker_max_num_flows_per_sec = victim_max_num_flows_per_sec = CONST_MAX_NEW_FLOWS_SECOND;
-  attacker_max_num_syn_per_sec = victim_max_num_syn_per_sec = CONST_MAX_NUM_SYN_PER_SECOND;  
+  attacker_max_num_syn_per_sec = victim_max_num_syn_per_sec = CONST_MAX_NUM_SYN_PER_SECOND;
+  ewma_alpha_percent = CONST_DEFAULT_EWMA_ALPHA_PERCENT;
   data_dir = strdup(CONST_DEFAULT_DATA_DIR);
   enable_access_log = false, flow_aggregation_enabled = false;
-  hostMask = no_host_mask;
   enable_flow_device_port_rrd_creation = false;
+  enable_top_talkers = false, enable_idle_local_hosts_cache = false;
+  enable_active_local_hosts_cache = false, enable_tiny_flows_export = true,
+  enable_probing_alerts = true, enable_ssl_alerts = true, enable_dns_alerts = true,
+  enable_remote_to_remote_alerts = true,
+  enable_dropped_flows_alerts = true,
+  enable_syslog_alerts = false, enable_captive_portal = false,
+  slack_notifications_enabled = false, dump_flow_alerts_when_iface_alerted = false,
+  override_dst_with_post_nat_dst = false, override_src_with_post_nat_src = false,
+  hostMask = no_host_mask;
+  enable_mac_ndpi_stats = false;
+  auto_assigned_pool_id = NO_HOST_POOL_ID;
+  default_l7policy = PASS_ALL_SHAPER_ID;
+
   install_dir = NULL, captureDirection = PCAP_D_INOUT;
   docs_dir = strdup(CONST_DEFAULT_DOCS_DIR);
   scripts_dir = strdup(CONST_DEFAULT_SCRIPTS_DIR);
   callbacks_dir = strdup(CONST_DEFAULT_CALLBACKS_DIR);
+  prefs_dir = NULL;
   config_file_path = ndpi_proto_path = NULL;
   http_port = CONST_DEFAULT_NTOP_PORT, alt_http_port = 0;
   http_prefix = strdup(""), zmq_encryption_pwd = NULL;
@@ -58,32 +69,24 @@ Prefs::Prefs(Ntop *_ntop) {
   user = strdup(CONST_DEFAULT_NTOP_USER);
   http_binding_address = NULL;
   https_binding_address = NULL; // CONST_ANY_ADDRESS;
-  httpbl_key = NULL, flashstart = NULL;
+  lan_interface = wan_interface = NULL;
+  httpbl_key = NULL;
   cpu_affinity = NULL;
   redis_host = strdup("127.0.0.1");
   redis_password = NULL;
   redis_port = 6379;
   redis_db_id = 0;
   dns_mode = 0;
-  logFd = NULL;
-  disable_alerts = enable_captive_portal = false;
-  enable_top_talkers = false;
-  slack_notifications_enabled = false;
-  max_num_alerts_per_entity = ALERTS_MANAGER_MAX_ENTITY_ALERTS;
-  max_num_flow_alerts = ALERTS_MANAGER_MAX_FLOW_ALERTS;
-  max_num_packets_per_tiny_flow = CONST_DEFAULT_MAX_NUM_PACKETS_PER_TINY_FLOW;
-  max_num_bytes_per_tiny_flow = CONST_DEFAULT_MAX_NUM_BYTES_PER_TINY_FLOW;
-  enable_tiny_flows_export = CONST_DEFAULT_IS_TINY_FLOW_EXPORT_ENABLED;
   pid_path = strdup(DEFAULT_PID_PATH);
   packet_filter = NULL;
-  enable_idle_local_hosts_cache   = true;
-  enable_active_local_hosts_cache = false; /* only cache active hosts on exit */
-  enable_probing_alerts = CONST_DEFAULT_ALERT_PROBING_ENABLED;
-  enable_ssl_alerts = CONST_DEFAULT_ALERT_SSL_ENABLED;
-  enable_syslog_alerts =  CONST_DEFAULT_ALERT_SYSLOG_ENABLED;
-  enable_probing_alerts = enable_ssl_alerts = enable_syslog_alerts = false; /* set later */
   num_interfaces = 0, enable_auto_logout = true;
   dump_flows_on_es = dump_flows_on_mysql = dump_flows_on_ls = false;
+  routing_mode_enabled = false;
+  global_dns_forging_enabled = true;
+#if defined(NTOPNG_PRO) && defined(HAVE_NDB)
+  dump_flows_on_ndb = false;
+#endif
+  read_flows_from_mysql = false;
   enable_taps = false;
   memset(ifNames, 0, sizeof(ifNames));
   dump_hosts_to_db = location_none;
@@ -93,35 +96,24 @@ Prefs::Prefs(Ntop *_ntop) {
 #endif
   export_endpoint = NULL;
   enable_ixia_timestamps = enable_vss_apcon_timestamps = false;
-  enable_user_scripts   = CONST_DEFAULT_USER_SCRIPTS_ENABLED;
-
-  /* Defaults */
-  active_local_hosts_cache_interval = CONST_DEFAULT_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL /* sec */;
-  local_host_cache_duration         = LOCAL_HOSTS_CACHE_DURATION /* sec */;
-  non_local_host_max_idle           = MAX_REMOTE_HOST_IDLE /* sec */;
-  local_host_max_idle               = MAX_LOCAL_HOST_IDLE /* sec */;
-  flow_max_idle                     = MAX_FLOW_IDLE /* sec */;
-
-  intf_rrd_raw_days       = INTF_RRD_RAW_DAYS;
-  intf_rrd_1min_days      = INTF_RRD_1MIN_DAYS;
-  intf_rrd_1h_days        = INTF_RRD_1H_DAYS;
-  intf_rrd_1d_days        = INTF_RRD_1D_DAYS;
-  other_rrd_raw_days      = OTHER_RRD_RAW_DAYS;
-  other_rrd_1min_days     = OTHER_RRD_1MIN_DAYS;
-  other_rrd_1h_days       = OTHER_RRD_1H_DAYS;
-  other_rrd_1d_days       = OTHER_RRD_1D_DAYS;
-  housekeeping_frequency  = HOUSEKEEPING_FREQUENCY;
+  enable_user_scripts    = CONST_DEFAULT_USER_SCRIPTS_ENABLED;
 
   es_type = strdup((char*)"flows"), es_index = strdup((char*)"ntopng-%Y.%m.%d"),
     es_url = strdup((char*)"http://localhost:9200/_bulk"),
     es_user = strdup((char*)""), es_pwd = strdup((char*)"");
 
+  redirection_url = redirection_url_shadow = NULL;
   mysql_host = mysql_dbname = mysql_tablename = mysql_user = mysql_pw = NULL;
+  mysql_port = CONST_DEFAULT_MYSQL_PORT;
   ls_host = NULL;
   ls_port = NULL;
   ls_proto = NULL;
-  has_cmdl_trace_lvl      = false;
-  has_cmdl_disable_alerts = false;
+  has_cmdl_trace_lvl = false;
+
+#ifdef HAVE_NEDGE
+  disable_dns_resolution();
+  disable_dns_responses_decoding();
+#endif
 }
 
 /* ******************************************* */
@@ -132,12 +124,12 @@ Prefs::~Prefs() {
     if(ifNames[i].description) free(ifNames[i].description);
   }
 
-  if(logFd)            fclose(logFd);
   if(data_dir)         free(data_dir);
   if(install_dir)      free(install_dir);
   if(docs_dir)         free(docs_dir);
   if(scripts_dir)      free(scripts_dir);
   if(callbacks_dir)    free(callbacks_dir);
+  if(prefs_dir)        free(prefs_dir);
   if(config_file_path) free(config_file_path);
   if(user)             free(user);
   if(pid_path)         free(pid_path);
@@ -152,7 +144,6 @@ Prefs::~Prefs() {
   free(http_prefix);
   free(local_networks);
   free(redis_host);
-  if(redirection_url) free(redirection_url);
   if(redis_password)  free(redis_password);
   if(cli)             free(cli);
   if(mysql_host)      free(mysql_host);
@@ -165,7 +156,10 @@ Prefs::~Prefs() {
   if(ls_proto)	      free(ls_proto);
   if(http_binding_address)  free(http_binding_address);
   if(https_binding_address) free(https_binding_address);
-  /* NOTE: flashstart is deleted by the Ntop class */
+  if(lan_interface)	free(lan_interface);
+  if(wan_interface)	free(wan_interface);
+  if(redirection_url)        free(redirection_url);
+  if(redirection_url_shadow) free(redirection_url_shadow);
 }
 
 /* ******************************************* */
@@ -184,12 +178,13 @@ void nDPIusage() {
 
 /* C-binding needed by Win32 service call */
 void usage() {
-  printf("ntopng %s v.%s - " NTOP_COPYRIGHT "\n\n"
+  printf("ntopng %s%s v.%s - " NTOP_COPYRIGHT "\n\n"
 	 "Usage:\n"
 	 "  ntopng <configuration file path>\n"
 	 "  or\n"
 	 "  ntopng <command line options> \n\n"
 	 "Options:\n"
+#ifndef HAVE_NEDGE
 	 "[--dns-mode|-n] <mode>              | DNS address resolution mode\n"
 	 "                                    | 0 - Decode DNS responses and resolve\n"
 	 "                                    |     local numeric IPs only (default)\n"
@@ -199,6 +194,7 @@ void usage() {
 	 "                                    |     resolve numeric IPs\n"
 	 "                                    | 3 - Don't decode DNS responses and don't\n"
 	 "                                    |     resolve numeric IPs\n"
+#endif
 	 "[--interface|-i] <interface|pcap>   | Input interface name (numeric/symbolic),\n"
          "                                    | view or pcap file path\n"
 #ifndef WIN32
@@ -215,11 +211,14 @@ void usage() {
 	 "                                    | Default: %s\n"
 	 "[--callbacks-dir|-3] <path>         | Callbacks directory.\n"
 	 "                                    | Default: %s\n"
+	 "[--prefs-dir|-4] <path>             | Preferences directory used to serialize\n"
+	 "                                    | and deserialize file\n"
+	 "                                    | containing runtime preferences.\n"
+	 "                                    | Default: %s\n"
 	 "[--no-promisc|-u]                   | Don't set the interface in promisc mode.\n"
 	 "[--traffic-filtering|-k] <param>    | Filter traffic using cloud services.\n"
 	 "                                    | (default: disabled). Available options:\n"
 	 "                                    | httpbl:<api_key>   See README.httpbl\n"
-	 "                                    | flashstart:<opt>   See README.flashstart\n"
 	 "[--http-port|-w] <[addr:]port>      | HTTP. Set to 0 to disable http server.\n"
 	 "                                    | Addr can be an IPv4 (192.168.1.1)\n"
 	 "                                    | or IPv6 ([3ffe:2a00:100:7031::1]) addr.\n"
@@ -274,10 +273,13 @@ void usage() {
 	 "[--pid|-G] <path>                   | Pid file path\n"
 #endif
 
-	 "[--disable-alerts|-H]               | Disable alerts generation\n"
 	 "[--packet-filter|-B] <filter>       | Ingress packet filter (BPF filter)\n"
+#ifndef HAVE_NEDGE
 	 "[--dump-flows|-F] <mode>            | Dump expired flows. Mode:\n"
-	 "                                    | es       Dump in ElasticSearch database\n"
+#ifdef HAVE_NDB
+	 "                                    | ndb           Dump in nDB\n"
+#endif
+	 "                                    | es            Dump in ElasticSearch database\n"
 	 "                                    |   Format:\n"
 	 "                                    |   es;<idx type>;<idx name>;<es URL>;<http auth>\n"
 	 "                                    |   Example:\n"
@@ -285,16 +287,31 @@ void usage() {
 	 "                                    |   Note: the <idx name> accepts the\n"
 	 "                                    |   strftime() format.\n"
 	 "                                    |\n"
-	 "                                    | logstash Dump in LogStash engine\n"
+	 "                                    | logstash      Dump in LogStash engine\n"
 	 "                                    |   Format:\n"
 	 "                                    |   logstash;<host>;<proto>;<port>\n"
 	 "                                    |   Example:\n"
 	 "                                    |   logstash;localhost;tcp;5510\n"
 	 "                                    |\n"
-	 "                                    | mysql    Dump in MySQL database\n"
+#ifdef HAVE_MYSQL
+	 "                                    | mysql         Dump in MySQL database\n"
 	 "                                    |   Format:\n"
-	 "                                    |   mysql;<host|socket>;<dbname>;<table name>;<user>;<pw>\n"
+	 "                                    |   mysql;<host[@port]|socket>;<dbname>;<table name>;<user>;<pw>\n"
 	 "                                    |   mysql;localhost;ntopng;flows;root;\n"
+	 "                                    |\n"
+	 "                                    | mysql-nprobe  Read from an nProbe-generated MySQL database\n"
+	 "                                    |   Format:\n"
+	 "                                    |   mysql-nprobe;<host|socket>;<dbname>;<prefix>;<user>;<pw>\n"
+	 "                                    |   mysql-nprobe;localhost;ntopng;nf;root;\n"
+	 "                                    |   Notes:\n"
+	 "                                    |    The <prefix> must be the same as used in nProbe.\n"
+	 "                                    |    Only one ntopng -i <interface> is allowed.\n"
+	 "                                    |    Flows are only read. Dump is assumed to be done by nProbe.\n"
+	 "                                    |   Example:\n"
+	 "                                    |     ./nprobe ... --mysql=\"localhost:ntopng:nf:root:root\"\n"
+	 "                                    |     ./ntopng ... --dump-flows=\"mysql-nprobe;localhost;ntopng;nf;root;root\"\n"
+#endif
+#endif
 	 "[--export-flows|-I] <endpoint>      | Export flows with the specified endpoint\n"
 	 "[--dump-hosts|-D] <mode>            | Dump hosts policy (default: none).\n"
 	 "                                    | Values:\n"
@@ -334,13 +351,20 @@ void usage() {
 	 "[--version|-V]                      | Print version and quit\n"
 	 "--print-ndpi-protocols              | Print the nDPI protocols list\n"
 	 "--simulate-vlans                    | Simulate VLAN traffic (debug only)\n"
-	 "[--help|-h]                         | Help\n"
+	 "[--help|-h]                         | Help\n",
+#ifdef HAVE_NEDGE
+	 "edge "
+#else
+	 ""
+#endif
 	 , PACKAGE_MACHINE, PACKAGE_VERSION,
 #ifndef WIN32
 	 ntop->get_working_dir(),
 #endif
 	 CONST_DEFAULT_DOCS_DIR, CONST_DEFAULT_SCRIPTS_DIR,
-         CONST_DEFAULT_CALLBACKS_DIR, CONST_DEFAULT_NTOP_PORT, CONST_DEFAULT_NTOP_PORT+1,
+         CONST_DEFAULT_CALLBACKS_DIR,
+	 CONST_DEFAULT_DATA_DIR,
+	 CONST_DEFAULT_NTOP_PORT, CONST_DEFAULT_NTOP_PORT+1,
          CONST_DEFAULT_NTOP_USER,
 	 MAX_NUM_INTERFACE_HOSTS, MAX_NUM_INTERFACE_HOSTS,
 	 CONST_DEFAULT_USERS_FILE);
@@ -355,24 +379,15 @@ void usage() {
 
 /* ******************************************* */
 
-u_int32_t Prefs::getDefaultPrefsValue(const char *pref_key, u_int32_t default_value) {
-  char rsp[32];
-
-  if(ntop->getRedis()->get((char*)pref_key, rsp, sizeof(rsp)) == 0)
-    return(atoi(rsp));
-  else {
-    snprintf(rsp, sizeof(rsp), "%u", default_value);
-    ntop->getRedis()->set((char*)pref_key, rsp);
-    return(default_value);
-  }
-}
-
-/* ******************************************* */
-
 void Prefs::setTraceLevelFromRedis(){
-  char lvlStr[CONST_MAX_LEN_REDIS_VALUE];
+  char *lvlStr;
+
+  if((lvlStr = (char*)malloc(CONST_MAX_LEN_REDIS_VALUE)) == NULL)
+    ;
+
   if(!hasCmdlTraceLevel()
-     && ntop->getRedis()->get((char *)CONST_RUNTIME_PREFS_LOGGING_LEVEL, lvlStr, sizeof(lvlStr)) == 0){
+     && ntop->getRedis()->get((char *)CONST_RUNTIME_PREFS_LOGGING_LEVEL,
+			      lvlStr, CONST_MAX_LEN_REDIS_VALUE) == 0){
     if(!strcmp(lvlStr, "trace")){
       ntop->getTrace()->set_trace_level(TRACE_LEVEL_TRACE);
     }
@@ -392,19 +407,8 @@ void Prefs::setTraceLevelFromRedis(){
       ntop->getTrace()->set_trace_level(TRACE_LEVEL_ERROR);
     }
   }
-}
 
-/* ******************************************* */
-
-void Prefs::setAlertsEnabledFromRedis(){
-  char resp[CONST_MAX_LEN_REDIS_VALUE];
-  if(!hasCmdlDisableAlerts()
-     && ntop->getRedis()->get((char *)CONST_ALERT_DISABLED_PREFS, resp, sizeof(resp)) == 0){
-    if(resp[0] == '1')
-      set_alerts_status(false /* disable */);
-    else
-      set_alerts_status(true  /* enable */);
-  }
+  free(lvlStr);
 }
 
 /* ******************************************* */
@@ -422,95 +426,163 @@ void Prefs::getDefaultStringPrefsValue(const char *pref_key, char **buffer, cons
 
 bool Prefs::getDefaultBoolPrefsValue(const char *pref_key, const bool default_value) {
   char rsp[8];
-  
+
   if(ntop->getRedis()->get((char*)pref_key, rsp, sizeof(rsp)) == 0)
     return((rsp[0] == '1') ? true : false);
   else
     return(default_value);
 }
-  
+
+/* ******************************************* */
+
+int32_t Prefs::getDefaultPrefsValue(const char *pref_key, int32_t default_value) {
+  char rsp[32];
+
+  if(ntop->getRedis()->get((char*)pref_key, rsp, sizeof(rsp)) == 0)
+    return(atoi(rsp));
+  else {
+    snprintf(rsp, sizeof(rsp), "%i", default_value);
+    ntop->getRedis()->set((char*)pref_key, rsp);
+    return(default_value);
+  }
+}
+
 /* ******************************************* */
 
 void Prefs::reloadPrefsFromRedis() {
-  char *safe_search_dns, *global_dns, *secondary_dns;
-
-  /* Attempt to load preferences set from the web ui and apply default values in not found */
-  active_local_hosts_cache_interval = getDefaultPrefsValue(CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL,
-							   CONST_DEFAULT_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL);
-  local_host_cache_duration         = getDefaultPrefsValue(CONST_LOCAL_HOST_CACHE_DURATION_PREFS,
-							   LOCAL_HOSTS_CACHE_DURATION);
-  local_host_max_idle               = getDefaultPrefsValue(CONST_LOCAL_HOST_IDLE_PREFS,
-							   MAX_LOCAL_HOST_IDLE);
-  non_local_host_max_idle           = getDefaultPrefsValue(CONST_REMOTE_HOST_IDLE_PREFS,
-							   MAX_REMOTE_HOST_IDLE);
-  flow_max_idle                     = getDefaultPrefsValue(CONST_FLOW_MAX_IDLE_PREFS,
-							   MAX_FLOW_IDLE);
-
-  intf_rrd_raw_days      = getDefaultPrefsValue(CONST_INTF_RRD_RAW_DAYS, INTF_RRD_RAW_DAYS);
-  intf_rrd_1min_days     = getDefaultPrefsValue(CONST_INTF_RRD_1MIN_DAYS, INTF_RRD_1MIN_DAYS);
-  intf_rrd_1h_days       = getDefaultPrefsValue(CONST_INTF_RRD_1H_DAYS, INTF_RRD_1H_DAYS);
-  intf_rrd_1d_days       = getDefaultPrefsValue(CONST_INTF_RRD_1D_DAYS, INTF_RRD_1D_DAYS);
-  other_rrd_raw_days     = getDefaultPrefsValue(CONST_OTHER_RRD_RAW_DAYS, OTHER_RRD_RAW_DAYS);
-  other_rrd_1min_days    = getDefaultPrefsValue(CONST_OTHER_RRD_1MIN_DAYS, OTHER_RRD_1MIN_DAYS);
-  other_rrd_1h_days      = getDefaultPrefsValue(CONST_OTHER_RRD_1H_DAYS, OTHER_RRD_1H_DAYS);
-  other_rrd_1d_days      = getDefaultPrefsValue(CONST_OTHER_RRD_1D_DAYS, OTHER_RRD_1D_DAYS);
-  housekeeping_frequency      = getDefaultPrefsValue(CONST_RUNTIME_PREFS_HOUSEKEEPING_FREQUENCY,
-						     HOUSEKEEPING_FREQUENCY);
-  slack_notifications_enabled          = getDefaultBoolPrefsValue(ALERTS_MANAGER_SLACK_NOTIFICATIONS_ENABLED, false /* Disabled by default */);
-  dump_flow_alerts_when_iface_alerted = getDefaultPrefsValue(ALERTS_DUMP_DURING_IFACE_ALERTED, 0 /* Disabled by default */);
-  hostMask = (HostMask)getDefaultPrefsValue(CONST_RUNTIME_PREFS_HOSTMASK, 0 /* Mask disabled by default */);
-  
+  char *aux = NULL;
   // sets to the default value in redis if no key is found
+#ifdef PREFS_RELOAD_DEBUG
+  ntop->getTrace()->traceEvent(TRACE_DEBUG, "A preference has changed, reloading...");
+#endif
+
   getDefaultPrefsValue(CONST_RUNTIME_IS_AUTOLOGOUT_ENABLED,
 		       CONST_DEFAULT_IS_AUTOLOGOUT_ENABLED);
-  enable_flow_device_port_rrd_creation = getDefaultPrefsValue(CONST_RUNTIME_PREFS_FLOW_DEVICE_PORT_RRD_CREATION,
-							    false);
-  enable_top_talkers		  = getDefaultPrefsValue(CONST_TOP_TALKERS_ENABLED,
-							 CONST_DEFAULT_TOP_TALKERS_ENABLED);
-  enable_idle_local_hosts_cache   = getDefaultPrefsValue(CONST_RUNTIME_IDLE_LOCAL_HOSTS_CACHE_ENABLED,
-							 CONST_DEFAULT_IS_IDLE_LOCAL_HOSTS_CACHE_ENABLED);
-  enable_active_local_hosts_cache = getDefaultPrefsValue(CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_ENABLED,
-							 CONST_DEFAULT_IS_ACTIVE_LOCAL_HOSTS_CACHE_ENABLED);
-  max_num_alerts_per_entity       = getDefaultPrefsValue(CONST_MAX_NUM_ALERTS_PER_ENTITY,
-							 ALERTS_MANAGER_MAX_ENTITY_ALERTS);
-  max_num_flow_alerts             = getDefaultPrefsValue(CONST_MAX_NUM_FLOW_ALERTS,
-							 ALERTS_MANAGER_MAX_FLOW_ALERTS);
-  max_num_packets_per_tiny_flow   = getDefaultPrefsValue(CONST_MAX_NUM_PACKETS_PER_TINY_FLOW,
-							 CONST_DEFAULT_MAX_NUM_PACKETS_PER_TINY_FLOW);
-  max_num_bytes_per_tiny_flow     = getDefaultPrefsValue(CONST_MAX_NUM_BYTES_PER_TINY_FLOW,
-							 CONST_DEFAULT_MAX_NUM_BYTES_PER_TINY_FLOW);
-  enable_tiny_flows_export =        getDefaultPrefsValue(CONST_IS_TINY_FLOW_EXPORT_ENABLED,
-				 			 CONST_DEFAULT_IS_TINY_FLOW_EXPORT_ENABLED);
-  
   // alert preferences
-  enable_probing_alerts = getDefaultPrefsValue(CONST_RUNTIME_PREFS_ALERT_PROBING,
-					       CONST_DEFAULT_ALERT_PROBING_ENABLED);
-  enable_ssl_alerts = getDefaultPrefsValue(CONST_RUNTIME_PREFS_ALERT_SSL,
-					       CONST_DEFAULT_ALERT_SSL_ENABLED);
-  enable_syslog_alerts  = getDefaultPrefsValue(CONST_RUNTIME_PREFS_ALERT_SYSLOG,
-					       CONST_DEFAULT_ALERT_SYSLOG_ENABLED);
-
-  enable_captive_portal = getDefaultBoolPrefsValue(CONST_PREFS_CAPTIVE_PORTAL, false);
   enable_access_log     = getDefaultBoolPrefsValue(CONST_PREFS_ENABLE_ACCESS_LOG, false);
 
-  setTraceLevelFromRedis();
-  setAlertsEnabledFromRedis();
-  refreshHostsAlertsPrefs();
+  /* Runtime Preferences */
+  housekeeping_frequency      = getDefaultPrefsValue(CONST_RUNTIME_PREFS_HOUSEKEEPING_FREQUENCY, HOUSEKEEPING_FREQUENCY),
+    local_host_cache_duration = getDefaultPrefsValue(CONST_LOCAL_HOST_CACHE_DURATION_PREFS, LOCAL_HOSTS_CACHE_DURATION),
+    local_host_max_idle       = getDefaultPrefsValue(CONST_LOCAL_HOST_IDLE_PREFS, MAX_LOCAL_HOST_IDLE),
+    non_local_host_max_idle   = getDefaultPrefsValue(CONST_REMOTE_HOST_IDLE_PREFS, MAX_REMOTE_HOST_IDLE),
+    flow_max_idle             = getDefaultPrefsValue(CONST_FLOW_MAX_IDLE_PREFS, MAX_FLOW_IDLE),
+    active_local_hosts_cache_interval = getDefaultPrefsValue(CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL, CONST_DEFAULT_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL),
 
-  getDefaultStringPrefsValue(CONST_SAFE_SEARCH_DNS, &safe_search_dns, DEFAULT_SAFE_SEARCH_DNS);
-  safe_search_dns_ip = inet_addr(safe_search_dns);
-  free(safe_search_dns);
+    intf_rrd_raw_days   = getDefaultPrefsValue(CONST_INTF_RRD_RAW_DAYS, INTF_RRD_RAW_DAYS),
+    intf_rrd_1min_days  = getDefaultPrefsValue(CONST_INTF_RRD_1MIN_DAYS, INTF_RRD_1MIN_DAYS),
+    intf_rrd_1h_days    = getDefaultPrefsValue(CONST_INTF_RRD_1H_DAYS, INTF_RRD_1H_DAYS),
+    intf_rrd_1d_days    = getDefaultPrefsValue(CONST_INTF_RRD_1D_DAYS, INTF_RRD_1D_DAYS),
+    other_rrd_raw_days  = getDefaultPrefsValue(CONST_OTHER_RRD_RAW_DAYS, OTHER_RRD_RAW_DAYS),
+    other_rrd_1min_days = getDefaultPrefsValue(CONST_OTHER_RRD_1MIN_DAYS, OTHER_RRD_1MIN_DAYS),
+    other_rrd_1h_days   = getDefaultPrefsValue(CONST_OTHER_RRD_1H_DAYS, OTHER_RRD_1H_DAYS),
+    other_rrd_1d_days   = getDefaultPrefsValue(CONST_OTHER_RRD_1D_DAYS, OTHER_RRD_1D_DAYS),
 
-  free(redirection_url);
+    enable_top_talkers              = getDefaultBoolPrefsValue(CONST_TOP_TALKERS_ENABLED,
+							       CONST_DEFAULT_TOP_TALKERS_ENABLED),
+    enable_idle_local_hosts_cache   = getDefaultBoolPrefsValue(CONST_RUNTIME_IDLE_LOCAL_HOSTS_CACHE_ENABLED,
+							       CONST_DEFAULT_IS_IDLE_LOCAL_HOSTS_CACHE_ENABLED),
+    enable_active_local_hosts_cache = getDefaultBoolPrefsValue(CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_ENABLED,
+							       CONST_DEFAULT_IS_ACTIVE_LOCAL_HOSTS_CACHE_ENABLED),
+    enable_tiny_flows_export        = getDefaultBoolPrefsValue(CONST_IS_TINY_FLOW_EXPORT_ENABLED,
+							       CONST_DEFAULT_IS_TINY_FLOW_EXPORT_ENABLED),
+
+    max_num_alerts_per_entity = getDefaultPrefsValue(CONST_MAX_NUM_ALERTS_PER_ENTITY, ALERTS_MANAGER_MAX_ENTITY_ALERTS),
+    max_num_flow_alerts = getDefaultPrefsValue(CONST_MAX_NUM_FLOW_ALERTS, ALERTS_MANAGER_MAX_FLOW_ALERTS),
+
+    enable_flow_device_port_rrd_creation = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_FLOW_DEVICE_PORT_RRD_CREATION, false),
+
+    disable_alerts        = getDefaultBoolPrefsValue(CONST_ALERT_DISABLED_PREFS, false),
+    enable_probing_alerts = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_ALERT_PROBING, CONST_DEFAULT_ALERT_PROBING_ENABLED),
+    enable_ssl_alerts     = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_ALERT_SSL, CONST_DEFAULT_ALERT_SSL_ENABLED),
+    enable_dns_alerts     = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_ALERT_DNS, CONST_DEFAULT_ALERT_DNS_ENABLED),
+    enable_remote_to_remote_alerts  = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_ALERT_REMOTE_TO_REMOTE,
+							       CONST_DEFAULT_ALERT_REMOTE_TO_REMOTE_ENABLED),
+    enable_dropped_flows_alerts     = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_ALERT_DROPPED_FLOWS,
+							       CONST_DEFAULT_ALERT_DROPPED_FLOWS_ENABLED),
+    enable_syslog_alerts  = getDefaultBoolPrefsValue(CONST_RUNTIME_PREFS_ALERT_SYSLOG, CONST_DEFAULT_ALERT_SYSLOG_ENABLED),
+    slack_notifications_enabled         = getDefaultBoolPrefsValue(ALERTS_MANAGER_SLACK_NOTIFICATIONS_ENABLED, false),
+    dump_flow_alerts_when_iface_alerted = getDefaultBoolPrefsValue(ALERTS_DUMP_DURING_IFACE_ALERTED, false),
+
+    override_dst_with_post_nat_dst = getDefaultBoolPrefsValue(CONST_DEFAULT_OVERRIDE_DST_WITH_POST_NAT, false),
+    override_src_with_post_nat_src = getDefaultBoolPrefsValue(CONST_DEFAULT_OVERRIDE_SRC_WITH_POST_NAT, false),
+
+    max_num_packets_per_tiny_flow = getDefaultPrefsValue(CONST_MAX_NUM_PACKETS_PER_TINY_FLOW,
+							 CONST_DEFAULT_MAX_NUM_PACKETS_PER_TINY_FLOW),
+    max_num_bytes_per_tiny_flow   = getDefaultPrefsValue(CONST_MAX_NUM_BYTES_PER_TINY_FLOW,
+							 CONST_DEFAULT_MAX_NUM_BYTES_PER_TINY_FLOW),
+
+    ewma_alpha_percent = getDefaultPrefsValue(CONST_EWMA_ALPHA_PERCENT, CONST_DEFAULT_EWMA_ALPHA_PERCENT);
+
+    enable_captive_portal = getDefaultBoolPrefsValue(CONST_PREFS_CAPTIVE_PORTAL, false),
+    default_l7policy = getDefaultPrefsValue(CONST_PREFS_DEFAULT_L7_POLICY, PASS_ALL_SHAPER_ID),
+
+    max_ui_strlen = getDefaultPrefsValue(CONST_RUNTIME_MAX_UI_STRLEN, CONST_DEFAULT_MAX_UI_STRLEN),
+    hostMask      = (HostMask)getDefaultPrefsValue(CONST_RUNTIME_PREFS_HOSTMASK, no_host_mask),
+    auto_assigned_pool_id = (u_int16_t) getDefaultPrefsValue(CONST_RUNTIME_PREFS_AUTO_ASSIGNED_POOL_ID, NO_HOST_POOL_ID);
+
+  getDefaultStringPrefsValue(CONST_RUNTIME_PREFS_ENABLE_MAC_NDPI_STATS, &aux, (char*)"none");
+  if(aux) {
+    enable_mac_ndpi_stats = strncmp(aux, (char*)"none", 4);
+    free(aux);
+  }
+
+  getDefaultStringPrefsValue(CONST_SAFE_SEARCH_DNS, &aux, DEFAULT_SAFE_SEARCH_DNS);
+  if(aux) {
+    safe_search_dns_ip = Utils::inet_addr(aux);
+    free(aux);
+  }
+
+  getDefaultStringPrefsValue(CONST_GLOBAL_DNS, &aux, DEFAULT_GLOBAL_DNS);
+  if(aux) {
+    global_primary_dns_ip = Utils::inet_addr(aux);
+    free(aux);
+  }
+
+  getDefaultStringPrefsValue(CONST_SECONDARY_DNS, &aux, DEFAULT_GLOBAL_DNS);
+  if(aux) {
+    global_secondary_dns_ip = Utils::inet_addr(aux);
+    free(aux);
+  }
+
+  if(redirection_url_shadow) free(redirection_url_shadow);
+  redirection_url_shadow = redirection_url;
+#ifndef HAVE_NEDGE
   getDefaultStringPrefsValue(CONST_PREFS_REDIRECTION_URL, &redirection_url, DEFAULT_REDIRECTION_URL);
+#else
+  getDefaultStringPrefsValue(CONST_PREFS_REDIRECTION_URL, &redirection_url, "");
+#endif
+  global_dns_forging_enabled = getDefaultBoolPrefsValue(CONST_PREFS_GLOBAL_DNS_FORGING_ENABLED, true);
 
-  getDefaultStringPrefsValue(CONST_GLOBAL_DNS, &global_dns, DEFAULT_GLOBAL_DNS);
-  global_primary_dns_ip = global_dns[0] ? inet_addr(global_dns) : 0;
-  free(global_dns);
+  setTraceLevelFromRedis();
+  refreshHostsAlertsPrefs();
+  refreshLanWanInterfaces();
 
-  getDefaultStringPrefsValue(CONST_SECONDARY_DNS, &secondary_dns, DEFAULT_GLOBAL_DNS);
-  global_secondary_dns_ip = secondary_dns[0] ? inet_addr(secondary_dns) : 0;
-  free(secondary_dns);
+#ifdef PREFS_RELOAD_DEBUG
+  ntop->getTrace()->traceEvent(TRACE_NORMAL, "Updated IPs "
+			       "[global_primary_dns_ip: %u]"
+			       "[global_secondary_dns_ip: %u]"
+			       "[safe_search_dns_ip: %u]",
+			       global_primary_dns_ip,
+			       global_secondary_dns_ip,
+			       safe_search_dns_ip
+			       );
+
+  ntop->getTrace()->traceEvent(TRACE_NORMAL, "Masked hosts"
+			       "[no_host_mask: %u]"
+			       "[mask_local_hosts: %u]"
+			       "[mask_remote_hosts: %u]",
+			       hostMask == no_host_mask ? 1 : 0,
+			       hostMask == mask_local_hosts ? 1 : 0,
+			       hostMask == mask_remote_hosts ? 1 : 0);
+
+  ntop->getTrace()->traceEvent(TRACE_NORMAL, "[disable_alerts: %u]",
+			       disable_alerts ? 1 : 0);
+
+  ntop->getTrace()->traceEvent(TRACE_NORMAL, "[mac_ndpi_stats: %u]",
+			       enable_mac_ndpi_stats ? 1 : 0);
+#endif
+
 }
 
 /* ******************************************* */
@@ -542,7 +614,9 @@ static const struct option long_options[] = {
   { "help",                              no_argument,       NULL, 'h' },
   { "interface",                         required_argument, NULL, 'i' },
   { "local-networks",                    required_argument, NULL, 'm' },
+#ifndef HAVE_NEDGE
   { "dns-mode",                          required_argument, NULL, 'n' },
+#endif
   { "traffic-filtering",                 required_argument, NULL, 'k' },
   { "disable-login",                     required_argument, NULL, 'l' },
   { "ndpi-protocols",                    required_argument, NULL, 'p' },
@@ -559,7 +633,6 @@ static const struct option long_options[] = {
 #ifndef WIN32
   { "pid",                               required_argument, NULL, 'G' },
 #endif
-  { "disable-alerts",                    no_argument,       NULL, 'H' },
   { "export-flows",                      required_argument, NULL, 'I' },
   { "capture-direction",                 required_argument, NULL, 'Q' },
   { "sticky-hosts",                      required_argument, NULL, 'S' },
@@ -573,6 +646,7 @@ static const struct option long_options[] = {
   { "httpdocs-dir",                      required_argument, NULL, '1' },
   { "scripts-dir",                       required_argument, NULL, '2' },
   { "callbacks-dir",                     required_argument, NULL, '3' },
+  { "prefs-dir",                         required_argument, NULL, '4' },
   { "print-ndpi-protocols",              no_argument,       NULL, 210 },
   { "online-license-check",              no_argument,       NULL, 211 },
   { "hw-timestamp-mode",                 required_argument, NULL, 212 },
@@ -597,7 +671,7 @@ void Prefs::parseHTTPPort(char *arg) {
   snprintf(tmp, sizeof(tmp), "%s", arg);
 
   a = strtok_r(tmp, ",", &_t);
-  if(a) {  
+  if(a) {
     http_port = atoi(a);
 
     a = strtok_r(NULL, ",", &_t);
@@ -609,10 +683,10 @@ void Prefs::parseHTTPPort(char *arg) {
 /* ******************************************* */
 
 int Prefs::setOption(int optkey, char *optarg) {
-  char *double_dot, *p, *opt = NULL;
+  char *double_dot, *p, *opt = NULL, buf[128] = { '\0' };
   int len = (optarg ? strlen(optarg) : 0)+6;
 
-  for(int i=0; ; i++) {
+  for(int i=0; long_options[i].name != NULL; i++) {
     if(long_options[i].val == optkey) {
       opt = (char*)long_options[i].name;
       len += strlen(opt)+2;
@@ -658,26 +732,7 @@ int Prefs::setOption(int optkey, char *optarg) {
   case 'k':
     if(strncmp(optarg, HTTPBL_STRING, strlen(HTTPBL_STRING)) == 0)
       httpbl_key = strdup(&optarg[strlen(HTTPBL_STRING)]);
-    else if(strncmp(optarg, FLASHSTART_STRING, strlen(FLASHSTART_STRING)) == 0) {
-      char *tmp, *user = strtok_r(&optarg[strlen(FLASHSTART_STRING)], ":", &tmp), *pwd = NULL;
-
-      if(user) pwd = strtok_r(NULL, ":", &tmp);
-
-      if(user && pwd) {
-	char *alt_dns;
-	char *alt_port;
-
-	if((alt_dns = strtok_r(NULL, ":", &tmp)) != NULL)
-	  alt_port = strtok_r(NULL, ":", &tmp);
-	else
-	  alt_port = NULL;
-	   
-	if((flashstart = new Flashstart(user, pwd, alt_dns, alt_port ? atoi(alt_port) : 53, false)) != NULL)
-	  ntop->set_flashstart(flashstart);
-      } else
-	ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid format for --%s<user>:<pwd>",
-				     FLASHSTART_STRING);
-    } else
+    else
       ntop->getTrace()->traceEvent(TRACE_ERROR, "Unknown value %s for -k", optarg);
     break;
 
@@ -725,6 +780,7 @@ int Prefs::setOption(int optkey, char *optarg) {
     local_networks_set = true;
     break;
 
+#ifndef HAVE_NEDGE
   case 'n':
     dns_mode = atoi(optarg);
     switch(dns_mode) {
@@ -744,6 +800,7 @@ int Prefs::setOption(int optkey, char *optarg) {
       usage();
     }
     break;
+#endif
 
   case 'p':
     ndpi_proto_path = strdup(optarg);
@@ -837,7 +894,7 @@ int Prefs::setOption(int optkey, char *optarg) {
 
   case 'r':
     {
-      char buf[64], *r;
+      char *r;
 
       /*
 	Supported formats for --redis
@@ -900,6 +957,11 @@ int Prefs::setOption(int optkey, char *optarg) {
     callbacks_dir = strdup(optarg);
     break;
 
+  case '4':
+    if(prefs_dir) free(prefs_dir);
+    prefs_dir = strdup(optarg);
+    break;
+
   case 'l':
     switch(atoi(optarg)) {
     case 0:
@@ -937,6 +999,12 @@ int Prefs::setOption(int optkey, char *optarg) {
     break;
 
   case 'F':
+#ifndef HAVE_NEDGE
+#if defined(NTOPNG_PRO) && defined(HAVE_NDB)
+    if(strncmp(optarg, "ndb", 2) == 0) {
+	dump_flows_on_ndb = true;
+    } else
+#endif
     if((strncmp(optarg, "es", 2) == 0) && (strlen(optarg) > 3)) {
       char *elastic_index_type = NULL, *elastic_index_name = NULL, *tmp = NULL,
 	*elastic_url = NULL, *elastic_user = NULL, *elastic_pwd = NULL;
@@ -979,8 +1047,13 @@ int Prefs::setOption(int optkey, char *optarg) {
 				     "Format: -F es;<index type>;<index name>;<es URL>;<user>:<pwd>");
       }
     } else if(!strncmp(optarg, "mysql", 5)) {
+      if(!strncmp(optarg, "mysql-nprobe", 12))
+	read_flows_from_mysql = true;
+      else
+	dump_flows_on_mysql = true;
+
       /* mysql;<host[@port]|unix socket>;<dbname>;<table name>;<user>;<pw> */
-      optarg = Utils::tokenizer(&optarg[6], ';', &mysql_host);
+      optarg = Utils::tokenizer(strchr(optarg, ';') + 1, ';', &mysql_host);
       optarg = Utils::tokenizer(optarg, ';', &mysql_dbname);
       optarg = Utils::tokenizer(optarg, ';', &mysql_tablename);
       optarg = Utils::tokenizer(optarg, ';', &mysql_user);
@@ -990,15 +1063,32 @@ int Prefs::setOption(int optkey, char *optarg) {
 	if((mysql_dbname == NULL) || (mysql_dbname[0] == '\0'))       mysql_dbname  = strdup("ntopng");
 	if((mysql_tablename == NULL)
 	   || (mysql_tablename[0] == '\0')
-	   || 1 /*forcefully defaults the table name*/) mysql_tablename  = strdup("flows");
+	   || dump_flows_on_mysql /*forcefully defaults the table name*/) {
+	  if(mysql_tablename) free(mysql_tablename);
+	  mysql_tablename  = strdup("flows");
+	}
 	if((mysql_pw == NULL) || (mysql_pw[0] == '\0')) mysql_pw  = strdup("");
 
-	dump_flows_on_mysql = true;
+	/* Check for non-default SQL port on -F line */
+	char* mysql_port_str;
+	if ((mysql_port_str = strchr(mysql_host, '@'))) {
+	  *(mysql_port_str++) = '\0';
+
+	  errno = 0;
+	  long l = strtol(mysql_port_str, NULL, 10);
+
+	  if (errno || !l)
+	    ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid mysql port, using default port %d [%s]",
+					 CONST_DEFAULT_MYSQL_PORT,
+					 strerror(errno));
+	  else
+	    mysql_port = (int)l;
+	}
       }  else
-	ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid format for -F mysql;....");     
+	ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid format for -F mysql;....");
     } else if(!strncmp(optarg, "logstash", strlen("logstash"))) {
       /* logstash;<host[@port]; */
-      ntop->getTrace()->traceEvent(TRACE_INFO, "Trying to get host for logstash");  
+      ntop->getTrace()->traceEvent(TRACE_INFO, "Trying to get host for logstash");
       optarg = Utils::tokenizer(&optarg[9],';',&ls_host);
       optarg = Utils::tokenizer(optarg,';',&ls_proto);
       ls_port = strdup(optarg ? optarg : NULL);
@@ -1010,7 +1100,9 @@ int Prefs::setOption(int optkey, char *optarg) {
 	ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid format for -F logstash;....");
       }
     } else
-      ntop->getTrace()->traceEvent(TRACE_WARNING, "Discarding -F %s: value out of range", optarg);
+      ntop->getTrace()->traceEvent(TRACE_WARNING,
+				   "Discarding -F %s: value out of range", optarg);
+#endif
     break;
 
 #ifndef WIN32
@@ -1018,11 +1110,6 @@ int Prefs::setOption(int optkey, char *optarg) {
     pid_path = strdup(optarg);
     break;
 #endif
-
-  case 'H':
-    has_cmdl_disable_alerts = true;
-    disable_alerts = true;
-    break;
 
   case 'I':
     export_endpoint = strdup(optarg);
@@ -1034,11 +1121,15 @@ int Prefs::setOption(int optkey, char *optarg) {
     break;
 
   case 'V':
-    printf("v.%s [%s%s Edition]\n", PACKAGE_VERSION,
+    printf("v.%s\t[%s%s build]\n", PACKAGE_VERSION,
+#ifndef HAVE_NEDGE
 #ifdef NTOPNG_PRO
 	   "Enterprise/Professional"
 #else
 	   "Community"
+#endif
+#else
+	   "Edge"
 #endif
 	   ,
 #ifdef NTOPNG_EMBEDDED_EDITION
@@ -1047,11 +1138,27 @@ int Prefs::setOption(int optkey, char *optarg) {
 	   ""
 #endif
 	   );
-    printf("GIT rev:   %s\n", NTOPNG_GIT_RELEASE);
+    printf("GIT rev:\t%s\n", NTOPNG_GIT_RELEASE);
 #ifdef NTOPNG_PRO
-    printf("Pro rev:   %s\n", NTOPNG_PRO_GIT_RELEASE);
-    printf("System Id: %s\n", ntop->getPro()->get_system_id());
-    printf("Built on:  %s\n", PACKAGE_OS);
+    printf("Pro rev:\t%s\n", NTOPNG_PRO_GIT_RELEASE);
+    printf("Built on:\t%s\n", PACKAGE_OS);
+
+    printf("System Id:\t%s\n", ntop->getPro()->get_system_id());
+
+    ntop->getTrace()->set_trace_level((u_int8_t)0);
+    ntop->registerPrefs(this, true);
+    ntop->getPro()->init_license();
+    printf("Platform:\t%s\n", PACKAGE_MACHINE);
+    printf("Edition:\t%s\n",      ntop->getPro()->get_edition());
+    printf("License Type:\t%s\n", ntop->getPro()->get_license_type());
+
+    if(ntop->getPro()->demo_ends_at())
+      printf("Validity:\t%s\n", ntop->getPro()->get_demo_expiration(buf, sizeof(buf)));
+    else
+      printf("Maintenance:\t%s\n", ntop->getPro()->get_maintenance_expiration(buf, sizeof(buf)));
+
+    if(ntop->getPro()->get_license()[0] != '\0')
+      printf("License:\t%s\n",      ntop->getPro()->get_license());
 #endif
     exit(0);
     break;
@@ -1089,7 +1196,7 @@ int Prefs::setOption(int optkey, char *optarg) {
   case 215:
     zmq_encryption_pwd = strdup(optarg);
     break;
-    
+
   case 216:
     enable_user_scripts = true;
     ntop->getTrace()->traceEvent(TRACE_NORMAL, "User scripts enabled");
@@ -1128,27 +1235,14 @@ int Prefs::setOption(int optkey, char *optarg) {
 /* ******************************************* */
 
 int Prefs::checkOptions() {
-#ifndef WIN32
-  if(daemonize)
-#endif
-    {
-      char path[MAX_PATH];
-
-      ntop_mkdir(data_dir, 0777);
-      snprintf(path, sizeof(path), "%s/ntopng.log", ntop->get_working_dir() /* "C:\\Windows\\Temp" */);
-      ntop->fixPath(path);
-      logFd = fopen(path, "w");
-      if(logFd)
-	ntop->getTrace()->traceEvent(TRACE_NORMAL, "Logging into %s", path);
-      else
-	ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to create log %s", path);
-    }
-
   if(install_dir)
     ntop->set_install_dir(install_dir);
 
   free(data_dir);
   data_dir = strdup(ntop->get_install_dir());
+
+  if(!prefs_dir)
+    prefs_dir = strdup(ntop->get_working_dir());
 
   docs_dir      = ntop->getValidPath(docs_dir);
   scripts_dir   = ntop->getValidPath(scripts_dir);
@@ -1158,10 +1252,12 @@ int Prefs::checkOptions() {
   if(!docs_dir[0])      { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate docs dir");      return(-1); }
   if(!scripts_dir[0])   { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate scripts dir");   return(-1); }
   if(!callbacks_dir[0]) { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate callbacks dir"); return(-1); }
+  if(!prefs_dir[0])     { ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to locate prefs dir");     return(-1); }
 
   ntop->removeTrailingSlash(docs_dir);
   ntop->removeTrailingSlash(scripts_dir);
   ntop->removeTrailingSlash(callbacks_dir);
+  ntop->removeTrailingSlash(prefs_dir);
 
   if(http_binding_address == NULL)
     http_binding_address = strdup((char*)CONST_ANY_ADDRESS);
@@ -1176,7 +1272,7 @@ int Prefs::loadFromCLI(int argc, char *argv[]) {
   u_char c;
 
   while((c = getopt_long(argc, argv,
-			 "k:eg:hi:w:r:sg:m:n:p:qd:t:x:1:2:3:l:uv:A:B:CD:E:F:N:G:HI:O:Q:S:TU:X:W:VZ:",
+			 "k:eg:hi:w:r:sg:m:n:p:qd:t:x:1:2:3:4:l:uv:A:B:CD:E:F:N:G:I:O:Q:S:TU:X:W:VZ:",
 			 long_options, NULL)) != '?') {
     if(c == 255) break;
     setOption(c, optarg);
@@ -1274,86 +1370,51 @@ void Prefs::add_default_interfaces() {
 /* *************************************** */
 
 void Prefs::lua(lua_State* vm) {
+  char buf[32], *red_url;
 #ifdef NTOPNG_PRO
   char HTTP_stats_base_dir[MAX_PATH*2];
 #endif
-  char buf[32];
 
   lua_newtable(vm);
 
   lua_push_bool_table_entry(vm, "is_dns_resolution_enabled_for_all_hosts", resolve_all_host_ip);
   lua_push_bool_table_entry(vm, "is_dns_resolution_enabled", enable_dns_resolution);
-  lua_push_bool_table_entry(vm, "is_categorization_enabled", flashstart ? true : false);
-  lua_push_bool_table_entry(vm, "is_flow_device_port_rrd_creation_enabled", enable_flow_device_port_rrd_creation ? true : false);
   lua_push_bool_table_entry(vm, "is_httpbl_enabled", is_httpbl_enabled());
   lua_push_bool_table_entry(vm, "is_autologout_enabled", enable_auto_logout);
-  lua_push_bool_table_entry(vm, "are_alerts_enabled", !disable_alerts);
-  lua_push_bool_table_entry(vm, "are_top_talkers_enabled", enable_top_talkers);
   lua_push_int_table_entry(vm, "http_port", http_port);
-  lua_push_int_table_entry(vm, "local_host_max_idle", local_host_max_idle);
-  lua_push_int_table_entry(vm, "local_host_cache_duration", local_host_cache_duration);
 
-  lua_push_int_table_entry(vm, "non_local_host_max_idle", non_local_host_max_idle);
-  lua_push_int_table_entry(vm, "flow_max_idle", flow_max_idle);
   lua_push_int_table_entry(vm, "max_num_hosts", max_num_hosts);
   lua_push_int_table_entry(vm, "max_num_flows", max_num_flows);
   lua_push_bool_table_entry(vm, "is_dump_flows_enabled", dump_flows_on_es || dump_flows_on_mysql || dump_flows_on_ls);
-  lua_push_bool_table_entry(vm, "is_dump_flows_to_mysql_enabled", dump_flows_on_mysql);
+  lua_push_bool_table_entry(vm, "is_dump_flows_to_mysql_enabled", dump_flows_on_mysql || read_flows_from_mysql);
   lua_push_bool_table_entry(vm, "is_flow_aggregation_enabled", is_flow_aggregation_enabled());
+  if(is_flow_aggregation_enabled())
+    lua_push_int_table_entry(vm, "flow_aggregation_frequency", flow_aggregation_frequency());
 
   if(mysql_dbname) lua_push_str_table_entry(vm, "mysql_dbname", mysql_dbname);
   lua_push_bool_table_entry(vm, "is_dump_flows_to_es_enabled",    dump_flows_on_es);
   lua_push_bool_table_entry(vm, "is_dump_flows_to_ls_enabled", dump_flows_on_ls);
 
-  lua_push_bool_table_entry(vm, "is_active_local_hosts_cache_enabled", enable_active_local_hosts_cache);
-  if(enable_active_local_hosts_cache)
-    lua_push_int_table_entry(vm, "active_local_hosts_cache_interval", active_local_hosts_cache_interval);
-
   lua_push_bool_table_entry(vm, "are_user_scripts_enabled", enable_user_scripts);
-  lua_push_bool_table_entry(vm, "is_captive_portal_enabled", enable_captive_portal);
   lua_push_int_table_entry(vm, "dump_hosts", dump_hosts_to_db);
 
   lua_push_int_table_entry(vm, "http.port", get_http_port());
   lua_push_int_table_entry(vm, "http.alt_port", get_alt_http_port());
-
-  /* RRD prefs */
-  lua_push_int_table_entry(vm, "intf_rrd_raw_days", intf_rrd_raw_days);
-  lua_push_int_table_entry(vm, "intf_rrd_1min_days", intf_rrd_1min_days);
-  lua_push_int_table_entry(vm, "intf_rrd_1h_days", intf_rrd_1h_days);
-  lua_push_int_table_entry(vm, "intf_rrd_1d_days", intf_rrd_1d_days);
-  lua_push_int_table_entry(vm, "other_rrd_raw_days", other_rrd_raw_days);
-  lua_push_int_table_entry(vm, "other_rrd_1min_days", other_rrd_1min_days);
-  lua_push_int_table_entry(vm, "other_rrd_1h_days", other_rrd_1h_days);
-  lua_push_int_table_entry(vm, "other_rrd_1d_days", other_rrd_1d_days);
-  lua_push_int_table_entry(vm, "housekeeping_frequency",    housekeeping_frequency);
-  lua_push_int_table_entry(vm, "max_num_alerts_per_entity", max_num_alerts_per_entity);
-  lua_push_int_table_entry(vm, "max_num_flow_alerts", max_num_flow_alerts);
-
-  lua_push_bool_table_entry(vm, "slack_enabled", slack_notifications_enabled);
-  lua_push_str_table_entry(vm, "safe_search_dns", Utils::intoaV4(ntohl(safe_search_dns_ip), buf, sizeof(buf)));
-  lua_push_str_table_entry(vm, "redirection_url", redirection_url);
-  lua_push_str_table_entry(vm, "global_dns", global_primary_dns_ip ? Utils::intoaV4(ntohl(global_primary_dns_ip), buf, sizeof(buf)) : (char*)"");
-  lua_push_str_table_entry(vm, "secondary_dns", global_secondary_dns_ip ? Utils::intoaV4(ntohl(global_secondary_dns_ip), buf, sizeof(buf)) : (char*)"");
-
-  /* Tiny flows preferences */
-  lua_push_int_table_entry(vm, "max_num_packets_per_tiny_flow", max_num_packets_per_tiny_flow);
-  lua_push_int_table_entry(vm, "max_num_bytes_per_tiny_flow",   max_num_bytes_per_tiny_flow);
-  lua_push_bool_table_entry(vm,"is_tiny_flows_export_enabled",  enable_tiny_flows_export);
 
   lua_push_str_table_entry(vm, "instance_name", instance_name ? instance_name : (char*)"");
 
   /* Sticky hosts preferences */
   if(sticky_hosts != location_none) {
     char *location_string = NULL;
+
     if(sticky_hosts == location_all) location_string = (char*)"all";
     else if(sticky_hosts == location_local_only) location_string = (char*)"local";
     else if(sticky_hosts == location_remote_only) location_string = (char*)"remote";
     if(location_string) lua_push_str_table_entry(vm, "sticky_hosts", location_string);
   }
-  
+
   /* Command line options */
   lua_push_bool_table_entry(vm, "has_cmdl_trace_lvl", has_cmdl_trace_lvl);
-  lua_push_bool_table_entry(vm, "has_cmdl_disable_alerts", has_cmdl_disable_alerts);
 
 #if defined(NTOPNG_PRO) && !defined(WIN32)
   if(ntop->getNagios()) ntop->getNagios()->lua(vm);
@@ -1365,149 +1426,54 @@ void Prefs::lua(lua_State* vm) {
   strncat(HTTP_stats_base_dir, "/httpstats/", MAX_PATH);
   lua_push_str_table_entry(vm, "http_stats_base_dir", HTTP_stats_base_dir);
 #endif
-}
 
-/* *************************************** */
+  lua_push_int_table_entry(vm, "housekeeping_frequency",    housekeeping_frequency);
+  lua_push_int_table_entry(vm, "local_host_cache_duration", local_host_cache_duration);
+  lua_push_int_table_entry(vm, "local_host_max_idle", local_host_max_idle);
+  lua_push_int_table_entry(vm, "non_local_host_max_idle", non_local_host_max_idle);
+  lua_push_int_table_entry(vm, "flow_max_idle", flow_max_idle);
+  if(enable_active_local_hosts_cache)
+    lua_push_int_table_entry(vm, "active_local_hosts_cache_interval", active_local_hosts_cache_interval);
 
-int Prefs::refresh(const char *pref_name, const char *pref_value) {
-  if(!pref_name || !pref_value)
-    return -1;
+  lua_push_int_table_entry(vm, "intf_rrd_raw_days", intf_rrd_raw_days);
+  lua_push_int_table_entry(vm, "intf_rrd_1min_days", intf_rrd_1min_days);
+  lua_push_int_table_entry(vm, "intf_rrd_1h_days", intf_rrd_1h_days);
+  lua_push_int_table_entry(vm, "intf_rrd_1d_days", intf_rrd_1d_days);
+  lua_push_int_table_entry(vm, "other_rrd_raw_days", other_rrd_raw_days);
+  lua_push_int_table_entry(vm, "other_rrd_1min_days", other_rrd_1min_days);
+  lua_push_int_table_entry(vm, "other_rrd_1h_days", other_rrd_1h_days);
+  lua_push_int_table_entry(vm, "other_rrd_1d_days", other_rrd_1d_days);
 
-  if(!strncmp(pref_name,
-	       (char*)CONST_RUNTIME_PREFS_HOUSEKEEPING_FREQUENCY,
-	       strlen((char*)CONST_RUNTIME_PREFS_HOUSEKEEPING_FREQUENCY)))
-    housekeeping_frequency = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_LOCAL_HOST_CACHE_DURATION_PREFS,
-		    strlen((char*)CONST_LOCAL_HOST_CACHE_DURATION_PREFS)))
-    local_host_cache_duration = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		   (char*)CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL,
-		   strlen((char*)CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_INTERVAL)))
-    active_local_hosts_cache_interval = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_LOCAL_HOST_IDLE_PREFS,
-		    strlen((char*)CONST_LOCAL_HOST_IDLE_PREFS)))
-    local_host_max_idle = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_REMOTE_HOST_IDLE_PREFS,
-		    strlen((char*)CONST_REMOTE_HOST_IDLE_PREFS)))
-    non_local_host_max_idle = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_FLOW_MAX_IDLE_PREFS,
-		    strlen((char*)CONST_FLOW_MAX_IDLE_PREFS)))
-    flow_max_idle = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_INTF_RRD_RAW_DAYS,
-		    strlen((char*)CONST_INTF_RRD_RAW_DAYS)))
-    intf_rrd_raw_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_INTF_RRD_1MIN_DAYS,
-		    strlen((char*)CONST_INTF_RRD_1MIN_DAYS)))
-    intf_rrd_1min_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_INTF_RRD_1H_DAYS,
-		    strlen((char*)CONST_INTF_RRD_1H_DAYS)))
-    intf_rrd_1h_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_INTF_RRD_1D_DAYS,
-		    strlen((char*)CONST_INTF_RRD_1D_DAYS)))
-    intf_rrd_1d_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_OTHER_RRD_RAW_DAYS,
-		    strlen((char*)CONST_OTHER_RRD_RAW_DAYS)))
-    other_rrd_raw_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_OTHER_RRD_1MIN_DAYS,
-		    strlen((char*)CONST_OTHER_RRD_1MIN_DAYS)))
-    other_rrd_1min_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_OTHER_RRD_1H_DAYS,
-		    strlen((char*)CONST_OTHER_RRD_1H_DAYS)))
-    other_rrd_1h_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_OTHER_RRD_1D_DAYS,
-		    strlen((char*)CONST_OTHER_RRD_1D_DAYS)))
-    other_rrd_1d_days = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_ALERT_DISABLED_PREFS,
-		    strlen((char*)CONST_ALERT_DISABLED_PREFS)))
-    disable_alerts = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_TOP_TALKERS_ENABLED,
-		    strlen((char*)CONST_TOP_TALKERS_ENABLED)))
-    enable_top_talkers = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_RUNTIME_IDLE_LOCAL_HOSTS_CACHE_ENABLED,
-		    strlen((char*)CONST_RUNTIME_IDLE_LOCAL_HOSTS_CACHE_ENABLED)))
-    enable_idle_local_hosts_cache = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_ENABLED,
-		    strlen((char*)CONST_RUNTIME_ACTIVE_LOCAL_HOSTS_CACHE_ENABLED)))
-    enable_active_local_hosts_cache = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_MAX_NUM_ALERTS_PER_ENTITY,
-		    strlen((char*)CONST_MAX_NUM_ALERTS_PER_ENTITY)))
-    max_num_alerts_per_entity = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		    (char*)CONST_SAFE_SEARCH_DNS,
-		    strlen((char*)CONST_SAFE_SEARCH_DNS))) {
-    safe_search_dns_ip = inet_addr(pref_value);
-  } else if(!strncmp(pref_name,
-		    (char*)CONST_GLOBAL_DNS,
-		    strlen((char*)CONST_GLOBAL_DNS))) {
-    global_primary_dns_ip = pref_value[0] ? inet_addr(pref_value) : 0;
-  } else if(!strncmp(pref_name,
-		    (char*)CONST_SECONDARY_DNS,
-		    strlen((char*)CONST_SECONDARY_DNS))) {
-    global_secondary_dns_ip = pref_value[0] ? inet_addr(pref_value) : 0;
-  } else if(!strncmp(pref_name,
-		    (char*)CONST_PREFS_REDIRECTION_URL,
-		    strlen((char*)CONST_PREFS_REDIRECTION_URL))) {
-    free(redirection_url);
-    redirection_url = strdup(pref_value);
-  } else if(!strncmp(pref_name,
-		    (char*)CONST_MAX_NUM_FLOW_ALERTS,
-		    strlen((char*)CONST_MAX_NUM_FLOW_ALERTS)))
-    max_num_flow_alerts = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		   (char*)CONST_MAX_NUM_PACKETS_PER_TINY_FLOW,
-		   strlen((char*)CONST_MAX_NUM_PACKETS_PER_TINY_FLOW)))
-    max_num_packets_per_tiny_flow = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		   (char*)CONST_MAX_NUM_BYTES_PER_TINY_FLOW,
-		   strlen((char*)CONST_MAX_NUM_BYTES_PER_TINY_FLOW)))
-    max_num_bytes_per_tiny_flow = atoi(pref_value);
-  else if(!strncmp(pref_name,
-		   (char*)CONST_IS_TINY_FLOW_EXPORT_ENABLED,
-		   strlen((char*)CONST_IS_TINY_FLOW_EXPORT_ENABLED)))
-    enable_tiny_flows_export = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		   (char*)CONST_RUNTIME_PREFS_FLOW_DEVICE_PORT_RRD_CREATION,
-		   strlen((char*)CONST_RUNTIME_PREFS_FLOW_DEVICE_PORT_RRD_CREATION)))
-    enable_flow_device_port_rrd_creation = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_RUNTIME_PREFS_ALERT_PROBING,
-		    strlen((char*)CONST_RUNTIME_PREFS_ALERT_PROBING)))
-    enable_probing_alerts = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_RUNTIME_PREFS_ALERT_SSL,
-		    strlen((char*)CONST_RUNTIME_PREFS_ALERT_SSL)))
-    enable_ssl_alerts = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		    (char*)CONST_RUNTIME_PREFS_ALERT_SYSLOG,
-		    strlen((char*)CONST_RUNTIME_PREFS_ALERT_SYSLOG)))
-    enable_syslog_alerts = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		   (char*)CONST_PREFS_CAPTIVE_PORTAL,
-		   strlen((char*)CONST_PREFS_CAPTIVE_PORTAL)))
-    enable_captive_portal = pref_value[0] == '1' ? true : false;
-  else if(!strncmp(pref_name,
-		   (char*)ALERTS_MANAGER_SLACK_NOTIFICATIONS_ENABLED,
-		   strlen((char*)ALERTS_MANAGER_SLACK_NOTIFICATIONS_ENABLED)))
-    slack_notifications_enabled = pref_value[0] == '1' ? true : false;
+  lua_push_bool_table_entry(vm, "are_top_talkers_enabled", enable_top_talkers);
+  lua_push_bool_table_entry(vm, "is_active_local_hosts_cache_enabled", enable_active_local_hosts_cache);
 
-  return 0;
+  lua_push_bool_table_entry(vm,"is_tiny_flows_export_enabled",  enable_tiny_flows_export);
+  lua_push_int_table_entry(vm, "max_num_alerts_per_entity", max_num_alerts_per_entity);
+  lua_push_int_table_entry(vm, "max_num_flow_alerts", max_num_flow_alerts);
+
+  lua_push_bool_table_entry(vm, "is_flow_device_port_rrd_creation_enabled", enable_flow_device_port_rrd_creation);
+
+  lua_push_bool_table_entry(vm, "are_alerts_enabled", !disable_alerts);
+  lua_push_bool_table_entry(vm, "slack_enabled", slack_notifications_enabled);
+
+  lua_push_int_table_entry(vm, "max_num_packets_per_tiny_flow", max_num_packets_per_tiny_flow);
+  lua_push_int_table_entry(vm, "max_num_bytes_per_tiny_flow",   max_num_bytes_per_tiny_flow);
+
+  lua_push_int_table_entry(vm, "ewma_alpha_percent", ewma_alpha_percent);
+
+  lua_push_str_table_entry(vm, "safe_search_dns",
+			   Utils::intoaV4(ntohl(safe_search_dns_ip), buf, sizeof(buf)));
+  lua_push_str_table_entry(vm, "global_dns",
+			   global_primary_dns_ip ? Utils::intoaV4(ntohl(global_primary_dns_ip), buf, sizeof(buf)) : (char*)"");
+  lua_push_str_table_entry(vm, "secondary_dns",
+			   global_secondary_dns_ip ? Utils::intoaV4(ntohl(global_secondary_dns_ip), buf, sizeof(buf)) : (char*)"");
+
+  lua_push_bool_table_entry(vm, "is_captive_portal_enabled", enable_captive_portal);
+
+  if((red_url = redirection_url))
+    lua_push_str_table_entry(vm, "redirection_url", red_url);
+
+  lua_push_int_table_entry(vm, "max_ui_strlen",   max_ui_strlen);
 }
 
 /* *************************************** */
@@ -1515,29 +1481,50 @@ int Prefs::refresh(const char *pref_name, const char *pref_value) {
 void Prefs::refreshHostsAlertsPrefs() {
   char rsp[32];
 
-  if (ntop->getRedis()->hashGet((char*)CONST_HOST_SYN_ATTACKER_ALERT_THRESHOLD_KEY,
+  if(ntop->getRedis()->hashGet((char*)CONST_RUNTIME_PREFS_HOSTS_ALERTS_CONFIG,
           (char*)CONST_HOST_FLOW_ATTACKER_ALERT_THRESHOLD_KEY, rsp, sizeof(rsp)) == 0)
     attacker_max_num_flows_per_sec = atol(rsp);
   else
     attacker_max_num_flows_per_sec = CONST_MAX_NEW_FLOWS_SECOND;
 
-  if (ntop->getRedis()->hashGet((char*)CONST_HOST_SYN_ATTACKER_ALERT_THRESHOLD_KEY,
+  if(ntop->getRedis()->hashGet((char*)CONST_RUNTIME_PREFS_HOSTS_ALERTS_CONFIG,
           (char*)CONST_HOST_FLOW_VICTIM_ALERT_THRESHOLD_KEY, rsp, sizeof(rsp)) == 0)
     victim_max_num_flows_per_sec = atol(rsp);
   else
     victim_max_num_flows_per_sec = CONST_MAX_NEW_FLOWS_SECOND;
 
-  if (ntop->getRedis()->hashGet((char*)CONST_RUNTIME_PREFS_HOSTS_ALERTS_CONFIG,
+  if(ntop->getRedis()->hashGet((char*)CONST_RUNTIME_PREFS_HOSTS_ALERTS_CONFIG,
           (char*)CONST_HOST_SYN_ATTACKER_ALERT_THRESHOLD_KEY, rsp, sizeof(rsp)) == 0)
     attacker_max_num_syn_per_sec = atol(rsp);
   else
     attacker_max_num_syn_per_sec = CONST_MAX_NUM_SYN_PER_SECOND;
 
-  if (ntop->getRedis()->hashGet((char*)CONST_RUNTIME_PREFS_HOSTS_ALERTS_CONFIG,
+  if(ntop->getRedis()->hashGet((char*)CONST_RUNTIME_PREFS_HOSTS_ALERTS_CONFIG,
           (char*)CONST_HOST_SYN_VICTIM_ALERT_THRESHOLD_KEY, rsp, sizeof(rsp)) == 0)
     victim_max_num_syn_per_sec = atol(rsp);
   else
     victim_max_num_syn_per_sec = CONST_MAX_NUM_SYN_PER_SECOND;
+}
+
+/* *************************************** */
+
+void Prefs::refreshLanWanInterfaces() {
+  char rsp[32];
+
+  if(lan_interface) free(lan_interface);
+  if(wan_interface) free(wan_interface);
+
+  if(ntop->getRedis()->get((char*)CONST_RUNTIME_PREFS_LAN_INTERFACE,
+      rsp, sizeof(rsp)) == 0)
+    lan_interface = strdup(rsp);
+  else
+    lan_interface = NULL;
+
+  if(ntop->getRedis()->get((char*)CONST_RUNTIME_PREFS_WAN_INTERFACE,
+      rsp, sizeof(rsp)) == 0)
+    wan_interface = strdup(rsp);
+  else
+    wan_interface = NULL;
 }
 
 /* *************************************** */
@@ -1577,6 +1564,18 @@ bool Prefs::is_enterprise_edition() {
 
 /* *************************************** */
 
+bool Prefs::is_nedge_edition() {
+  return
+#ifdef HAVE_NEDGE
+    ntop->getPro()->has_valid_license()
+#else
+  false
+#endif
+    ;
+}
+
+/* *************************************** */
+
 time_t Prefs::pro_edition_demo_ends_at() {
   return
 #ifdef NTOPNG_PRO
@@ -1585,4 +1584,19 @@ time_t Prefs::pro_edition_demo_ends_at() {
     0
 #endif
     ;
+}
+
+/* *************************************** */
+
+/* Perform here post-initialization validations */
+
+void Prefs::validate() {
+#if defined(NTOPNG_PRO) && defined(HAVE_NDB)
+  if(dump_flows_on_ndb) {
+    if(!ntop->getPro()->is_ndb_in_use()) {
+      ntop->getTrace()->traceEvent(TRACE_WARNING, "Ignored '-F ndb' as nDB is not in use");
+      dump_flows_on_ndb = false;
+    }
+  }
+#endif
 }

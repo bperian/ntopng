@@ -5,7 +5,6 @@
 
 var host_rows_option = {};
 host_rows_option["ip"] = false;
-host_rows_option["categorization"] = false;
 host_rows_option["httpbl"] = false;
 host_rows_option["vlan"] = false;
 
@@ -18,19 +17,19 @@ function host_table_setID (row) {
   row.attr('id', host_key);
 
   row.find("td").eq(index++).attr('id', host_key+"_key");
+  row.find("td").eq(index++).attr('id', host_key+"_info");
   //custom
   if (host_rows_option["ip"]) row.find("td").eq(index++).attr('id', host_key+"_ip");
   if (host_rows_option["vlan"]) row.find("td").eq(index++).attr('id', host_key+"_vlan");
   // hosts_stats_top
   row.find("td").eq(index++).attr('id', host_key+"_location");
   row.find("td").eq(index++).attr('id', host_key+"_num_flows");
+  row.find("td").eq(index++).attr('id', host_key+"_num_dropped_flows");
   row.find("td").eq(index++).attr('id', host_key+"_alerts");
   row.find("td").eq(index++).attr('id', host_key+"_name");
   row.find("td").eq(index++).attr('id', host_key+"_since");
-  row.find("td").eq(index++).attr('id', host_key+"_asn");
   
   //custom
-  if (host_rows_option["categorization"]) row.find("td").eq(index++).attr('id', host_key+"_category");
   if (host_rows_option["httpbl"]) row.find("td").eq(index++).attr('id', host_key+"_httpbl");
   
   // hosts_stats_bottom
@@ -62,6 +61,7 @@ function row_update(host_key) {
       $('td[id="'+host_key+'_throughput"]').html(data.column_thpt);
       $('td[id="'+host_key+'_traffic"]').html(data.column_traffic);
       $('td[id="'+host_key+'_num_flows"]').html(data.column_num_flows);
+      $('td[id="'+host_key+'_num_dropped_flows"]').html(data.column_num_dropped_flows);
     },
     error: function(content) {
       console.log("error");

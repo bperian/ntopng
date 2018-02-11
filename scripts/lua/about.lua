@@ -19,11 +19,11 @@ if(_POST["ntopng_license"] ~= nil) then
 end
 
 info = ntop.getInfo()
-print("<hr /><h2>"..i18n("about.about").." "..info["product"].."</h2>")
+print("<hr /><h2>"..i18n("about.about_x", {product=info["product"]}).."</h2>")
 
 print("<table class=\"table table-bordered table-striped\">\n")
-print("<tr><th>Copyright</th><td>"..info["copyright"].."</td></tr>\n")
-print("<tr><th>License</th><td>")
+print("<tr><th>") print(i18n("about.copyright")) print("</th><td>"..info["copyright"].."</td></tr>\n")
+print("<tr><th>") print(i18n("about.licence")) print("</th><td>")
 
 info["ntopng.license"] = ntop.getCache('ntopng.license')
 if(info["pro.release"] == false) then
@@ -58,17 +58,23 @@ print[[</small>
 	 <p>
    ]]
 
-   print('<form class="form-inline" style="margin-bottom: 0px;" method="post">')
+   print('<form class="form-inline" style="margin-bottom: 0px;" method="post" onsubmit="return trimLicenceSpaces();">')
 
    if(isAdministrator()) then
       if(info["pro.use_redis_license"] or (info["pro.license"] == "")) then
 	 print('<input id="csrf" name="csrf" type="hidden" value="'..ntop.getRandomCSRFValue()..'" />\n')
-	 print('<input type="text" name="ntopng_license" placeholder="'..i18n("about.specify_licence")..'" size=70 value="')
+	 print('<input id="ntopng_licence" type="text" name="ntopng_license" placeholder="'..i18n("about.specify_licence")..'" size=70 value="')
 	 print(info["ntopng.license"])
 	 
 	 print [["></input>
 		  &nbsp;<button type="submit" style="position: absolute; margin-top: 0; height: 26px" class="btn btn-default btn-xs">]] print(i18n("about.save_licence")) print[[</button>	       
 		  </form>
+          <script>
+            function trimLicenceSpaces() {
+                $("#ntopng_licence").val($("#ntopng_licence").val().trim());
+                return true;
+            }
+          </script>
 	    ]]
       else
 	 if(info["pro.license"]) then
@@ -87,23 +93,9 @@ else
    ntopng_git_url = info["version"]
 end
 
-print("<tr><th>"..i18n("about.version").."</th><td>"..ntopng_git_url)
+print("<tr><th>"..i18n("about.version").."</th><td>"..ntopng_git_url.." - ")
 
-if(info["pro.release"] == false) then
-   print(" - Community")
-else
-   if(info["version.enterprise_edition"] == true) then
-      print(" - Enterprise")
-   else
-      print(" - Pro Small Business")
-   end
-end
-
-if(info["version.embedded_edition"] == true) then
-   print("/Embedded")
-end
-
-print(" Edition</td></tr>\n")
+printntopngRelease(info)
 
 if((info["OS"] ~= nil) and (info["OS"] ~= "")) then
    print("<tr><th>"..i18n("about.built_on").."</th><td>"..info["OS"].."</td></tr>\n") 
@@ -133,7 +125,9 @@ print("<tr><th><a href=\"http://www.rrdtool.org/\" target=\"_blank\">RRDtool</A>
 print("<tr><th><a href=\"http://www.redis.io\" target=\"_blank\">Redis</A> Server</th><td>"..info["version.redis"].."</td></tr>\n")
 print("<tr><th><a href=\"https://github.com/valenok/mongoose\" target=\"_blank\">Mongoose web server</A></th><td>"..info["version.httpd"].."</td></tr>\n")
 print("<tr><th><a href=\"http://www.luajit.org\" target=\"_blank\">LuaJIT</A></th><td>"..info["version.luajit"].."</td></tr>\n")
-print("<tr><th><a href=\"http://www.zeromq.org\" target=\"_blank\">ØMQ</A></th><td>"..info["version.zmq"].."</td></tr>\n")
+if info["version.zmq"] ~= nil then
+   print("<tr><th><a href=\"http://www.zeromq.org\" target=\"_blank\">ØMQ</A></th><td>"..info["version.zmq"].."</td></tr>\n")
+end
 if(info["version.geoip"] ~= nil) then
 print("<tr><th><a href=\"http://www.maxmind.com\" target=\"_blank\">GeoIP</A></th><td>"..info["version.geoip"])
 

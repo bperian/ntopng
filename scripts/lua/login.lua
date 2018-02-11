@@ -7,8 +7,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 -- io.write ("Session:".._SESSION["session"].."\n")
 require "lua_utils"
 
---[[ Note: keep the old iso-8859-1 encoding to avoid breaking existing passwords ]]
-sendHTTPContentTypeHeader('text/html', nil, 'iso-8859-1')
+sendHTTPContentTypeHeader('text/html')
 
 ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/header.inc")
 info = ntop.getInfo()
@@ -54,12 +53,12 @@ print [[
 
 <div class="container">
 
-	 <form role="form" data-toggle="validator" class="form-signin" action="]] print(ntop.getHttpPrefix()) print[[/authorize.html" method="POST">
-	 <h2 class="form-signin-heading" style="font-weight: bold;">Welcome to ]] print(info["product"]) print [[</h2>
+	 <form id="form_add_user" role="form" data-toggle="validator" class="form-signin" onsubmit="return makeUsernameLowercase();" action="]] print(ntop.getHttpPrefix()) print[[/authorize.html" method="POST">
+	 <h2 class="form-signin-heading" style="font-weight: bold;">]] print(i18n("login.welcome_to", {product=info["product"]})) print[[</h2>
   <div class="form-group has-feedback">
-
-      <input type="text" class="form-control" name="user" placeholder="Username" pattern="^[\w\.%]{1,}$" required>
-      <input type="password" class="form-control" name="password" placeholder="Password" pattern="]] print(getPasswordInputPattern()) print[[" required>
+      <input type="hidden" class="form-control" name="user">
+      <input type="text" class="form-control" name="_username" placeholder="]] print(i18n("login.username_ph")) print[[" pattern="^[\w\.%]{1,}$" required>
+      <input type="password" class="form-control" name="password" placeholder="]] print(i18n("login.password_ph")) print[[" pattern="]] print(getPasswordInputPattern()) print[[" required>
 </div>
 	 <input type="hidden" class="form-control" name="referer" value="]] 
 
@@ -82,17 +81,15 @@ print(r)
 
 
 print [[">
-    <button class="btn btn-lg btn-primary btn-block" type="submit">Login</button>
+    <button class="btn btn-lg btn-primary btn-block" type="submit">]] print(i18n("login.login")) print[[</button>
   	<div class="row">
       <div >&nbsp;</div>
       <div class="col-lg-12">
         <small>
-      <p>If you find ]] print(info["product"]) print [[ useful, please support us by making a small <A href="http://shop.ntop.org">donation</A>. Your funding will help to run and foster the development of this project. Thank you.
+      <p>]] print(i18n("login.donation", {product=info["product"], donation_url="http://shop.ntop.org"})) print[[
           </p>
 
-      <p>]] print(info["copyright"]) print [[<br> ]] print(info["product"]) print [[ is released under <A HREF="http://www.gnu.org/copyleft/gpl.html">GPLv3</A>.</p>
-
-  	      <p class="text-muted">Hint: the default user and password are admin</p>
+      <p>]] print(info["copyright"]) print [[<br> ]] print(i18n("login.license", {product=info["product"], license="GPLv3", license_url="http://www.gnu.org/copyleft/gpl.html"})) print[[</p>
         </small>
       </div>
     </div>
@@ -100,7 +97,15 @@ print [[">
 
 <script>
   $("input:text:visible:first").focus();
-  $('#form_add_user').validator()
+  //$('#form_add_user').validator();
+
+  function makeUsernameLowercase() {
+    var target = $('#form_add_user input[name="user"]');
+    var origin = $('#form_add_user input[name="_username"]');
+    target.val(origin.val().toLowerCase());
+    origin.removeAttr("name");
+    return true;
+  }
 </script>
 
 </div> <!-- /container -->

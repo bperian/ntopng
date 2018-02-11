@@ -26,6 +26,7 @@
 
         <form id="{{wizard.id}}Form" style="height:95%;"
          data-ays-ignore="true"
+         onkeypress="return event.keyCode != 13;"
          method="{{wizard.form_method or "post"}}"
          {% if wizard.form_action ~= nil then %} action="{{wizard.form_action}} {% end %}"
          {% if wizard.form_onsubmit ~= nil then %} onsubmit="return {{wizard.form_onsubmit}}(this)" {% end %}>
@@ -96,9 +97,19 @@
   /* On Previous button click */
   $('#{{wizard.id}} a.wizard-prev').click(function(){
     var prevId = $(this).parents('.tab-pane').prev().attr("id");
-    $('[href=#'+prevId+']').tab('show');
+    $('[href="#'+prevId+'"]').tab('show');
     return false;
   });
+
+  {{wizard.id}}OnShow = [];
+
+  {% for step_idx, step in ipairs(wizard.actual_steps) do %}
+    {% if step.on_show then %}
+      {{wizard.id}}OnShow.push(function(){ {*step.on_show*} });
+    {% else %}
+      {{wizard.id}}OnShow.push($.noop);
+    {% end %}
+  {% end %}
 
   $('#{{wizard.id}} a[data-toggle="tab"]')
     /* On Tab click */
@@ -128,6 +139,8 @@
       /* Enable previous tabs, disable next tabs */
       $(this).parent().prevAll().find("a").removeClass("disabled");
       $(this).parent().nextAll().find("a").addClass("disabled");
+
+      {{wizard.id}}OnShow[cur_step-1]();
     });
 
   $("#{{wizard.id}}Form")

@@ -10,20 +10,20 @@ local host_pools_utils = require "host_pools_utils"
 sendHTTPContentTypeHeader('text/html')
 
 -- Table parameters
-all = _GET["all"]
-currentPage = _GET["currentPage"]
-perPage     = _GET["perPage"]
-sortColumn  = _GET["sortColumn"]
-sortOrder   = _GET["sortOrder"]
+local all = _GET["all"]
+local currentPage = _GET["currentPage"]
+local perPage     = _GET["perPage"]
+local sortColumn  = _GET["sortColumn"]
+local sortOrder   = _GET["sortOrder"]
 
-group_col   = _GET["grouped_by"]
-as_n        = _GET["asn"]
-vlan_n      = _GET["vlan"]
-network_n   = _GET["network"]
-country_n   = _GET["country"]
-os_n        = _GET["os"]
-pool_n      = _GET["pool"]
-ipver_n     = _GET["version"]
+local group_col   = _GET["grouped_by"]
+local as_n        = _GET["asn"]
+local vlan_n      = _GET["vlan"]
+local network_n   = _GET["network"]
+local country_n   = _GET["country"]
+local os_n        = _GET["os"]
+local pool_n      = _GET["pool"]
+local ipver_n     = _GET["version"]
 
 interface.select(ifname)
 local ifstats = interface.getStats()
@@ -33,7 +33,7 @@ if (group_col == nil) then
 end
 
 -- Get from redis the throughput type bps or pps
-throughput_type = getThroughputType()
+local throughput_type = getThroughputType()
 
 if ((sortColumn == nil) or (sortColumn == "column_")) then
    sortColumn = getDefaultTableSort(group_col)
@@ -65,7 +65,7 @@ else
    tablePreferences("rows_number",perPage)
 end
 
-to_skip = (currentPage-1) * perPage
+local to_skip = (currentPage-1) * perPage
 
 if (all ~= nil) then
    perPage = 0
@@ -75,22 +75,22 @@ end
 if (as_n == nil and vlan_n == nil and network_n == nil and country_n == nil and os_n == nil and pool_n == nil) then -- single group info requested
    print ("{ \"currentPage\" : " .. currentPage .. ",\n \"data\" : [\n")
 end
-num = 0
-total = 0
+local num = 0
+local total = 0
 
-now = os.time()
-vals = {}
+local now = os.time()
+local vals = {}
 
-stats_by_group_col = {}
+local stats_by_group_col = {}
 
-stats_by_group_key = interface.getGroupedHosts(false, -- do not show details
+local stats_by_group_key = interface.getGroupedHosts(false, -- do not show details
    "column_"..group_col, -- group column
    country_n,            -- country filter
    os_n,                 -- OS filter
    tonumber(vlan_n),     -- VLAN filter
    tonumber(as_n),       -- ASN filter
    tonumber(network_n),  -- Network filter
-   true,                 -- Hosts only, no MAC
+   false,                -- All hosts, not just hosts that have a source mac
    tonumber(pool_n),     -- Host Pool filter
    tonumber(ipver_n))    -- IP version filter (4 or 6)
 stats_by_group_col = stats_by_group_key
@@ -151,17 +151,25 @@ function print_single_group(value)
       if(manufacturer == nil) then manufacturer = "" end
       print(manufacturer..'</A>", ')
    elseif(group_col == "pool_id") then
+      local poolstats_rrd = host_pools_utils.getRRDBase(ifstats.id, value["id"])
       local pool_name = host_pools_utils.getPoolName(getInterfaceId(ifname), tostring(value["id"]))
+
       print(pool_name..'</A> " , ')
       print('"column_chart": "')
-      print('<A HREF='..ntop.getHttpPrefix()..'/lua/pool_details.lua?pool='..value["id"]..'&page=historical><i class=\'fa fa-area-chart fa-lg\'></i></A>')
+
+      if (ntop.getCache("ntopng.prefs.host_pools_rrd_creation") == "1" and ntop.exists(poolstats_rrd)) then
+         print('<A HREF='..ntop.getHttpPrefix()..'/lua/pool_details.lua?pool='..value["id"]..'&page=historical><i class=\'fa fa-area-chart fa-lg\'></i></A>')
+      else
+         print('')
+      end
+
       print('", ')
    elseif(group_col == "asn") then
       print(value["id"]..'</A>", ')
       print('"column_chart": "')
-      local asnstats_rrd = fixPath(dirs.workingdir .. "/" .. ifstats.id..'/asnstats/'..value["id"]..'/bytes.rrd')
+      local asnstats_rrd = getRRDName(ifstats.id, 'asn:'..value["id"], 'bytes.rrd')
       if ntop.exists(asnstats_rrd) then
-         print('<A HREF='..ntop.getHttpPrefix()..'/lua/hosts_stats.lua?asn='..value["id"]..'&page=historical><i class=\'fa fa-area-chart fa-lg\'></i></A>')
+         print('<A HREF='..ntop.getHttpPrefix()..'/lua/as_details.lua?asn='..value["id"]..'&page=historical><i class=\'fa fa-area-chart fa-lg\'></i></A>')
       else
          print('')
       end
@@ -177,13 +185,14 @@ function print_single_group(value)
    if((alt ~= nil) and (alt ~= value["id"])) then alt = " ("..alt..")" else alt = "" end
    print('"column_link": "<A HREF=\''..ntop.getHttpPrefix()..'/lua/mac_details.lua?mac='.. value["id"] ..'\'>'.. value["id"]..alt..'</A>')
 
-   if(not(isSpecialMac(value["id"]))) then
+   -- TODO how is this used?
+   --[[if(not(isSpecialMac(value["id"]))) then
         local icon = getHostIcon(value["id"])
 
 	if(icon ~= "") then
 	   print(icon)
         end
-   end
+   end]]
 
    print('",')
 
@@ -192,6 +201,12 @@ function print_single_group(value)
    end
 
    print('"column_hosts" : "' .. formatValue(value["num_hosts"]) ..'",')
+
+   print('"column_num_flows" : "' .. formatValue(value["num_flows"]) ..'",')
+
+   if isBridgeInterface(ifstats) then
+      print('"column_num_dropped_flows" : "' .. formatValue(value["num_dropped_flows"] or 0) ..'",')
+   end
 
    print ("\"column_alerts\" : \"")
    if((value["num_alerts"] ~= nil) and (value["num_alerts"] > 0)) then
@@ -303,6 +318,10 @@ for key,value in pairs(stats_by_group_col) do
 	 vals[key] = v["name"]
       elseif(sortColumn == "column_hosts") then
 	 vals[key] = v["num_hosts"]
+      elseif(sortColumn == "column_num_flows") then
+	 vals[key] = v["num_flows"]
+      elseif(sortColumn == "column_num_dropped_flows") then
+	 vals[key] = v["num_dropped_flows"]
       elseif(sortColumn == "column_since") then
 	 vals[key] = (now-v["seen.first"])
       elseif(sortColumn == "column_alerts") then

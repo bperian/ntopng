@@ -73,25 +73,6 @@ function is_network_mask(what, optional_mask) {
    return null;
 }
 
-function makeUniqueValidator(items_function) {
-   return function(field) {
-      var cmp_name = field.val();
-      var count = 0;
-
-      // this will be checked separately, with 'required' argument
-      if(! cmp_name)
-         return true;
-
-      items_function(field).each(function() {
-         var name = $(this).val();
-         if (name == cmp_name)
-            count = count + 1;
-      });
-
-      return count == 1;
-   }
-}
-
 function fbits(bits) {
     var sizes = ['bps', 'kbit/s', 'Mbit/s', 'Gbit/s', 'Tbit/s'];
     if(bits <= 0) return '0';
@@ -124,6 +105,17 @@ function fpackets(pps) {
     }
     // Round to two decimal digits
     return Math.round(pps / Math.pow(1000, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+function fflows(fps) {
+    var sizes = ['fps', 'Kfps', 'Mfps', 'Gfps', 'Tfps'];
+    if(fps == 0) return '0';
+    var i = parseInt(Math.floor(Math.log(fps) / Math.log(1000)));
+    if (i < 0 || isNaN(i)) {
+	i = 0;
+    }
+    // Round to two decimal digits
+    return Math.round(fps / Math.pow(1000, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 function fint(value) {
@@ -498,9 +490,22 @@ if (typeof(Math.sign) === "undefined") {
   };
 }
 
-function memberValueValidator(input) {
-  var member = input.val();
-  if (member === "") return true;
+/* Used while searching hosts a and macs with typeahead */
+function makeFindHostBeforeSubmitCallback(http_prefix) {
+  return function(form, data) {
+    if (data.isMac)
+      form.attr("action", http_prefix + "/lua/mac_details.lua");
+    else
+      form.attr("action", http_prefix + "/lua/host_details.lua");
 
-  return is_mac_address(member) || is_network_mask(member, true);
+    return true;
+  }
+}
+
+function tstampToDateString(html_tag, format, tdiff) {
+  tdiff = tdiff || 0;
+  var timestamp = parseInt(html_tag.html()) + tdiff;
+  var localized = d3.time.format(format)(new Date(timestamp*1000));
+  html_tag.html(localized).removeClass("hidden");
+  return localized;
 }

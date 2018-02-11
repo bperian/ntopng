@@ -16,8 +16,9 @@ local sortColumn   = _GET["sortColumn"]
 local sortOrder    = _GET["sortOrder"]
 
 local vlan         = _GET["vlan"]
-local host_macs_only        = _GET["host_macs_only"]
+local devices_mode          = _GET["devices_mode"]
 local manufacturer          = _GET["manufacturer"]
+local device_type           = tonumber(_GET["device_type"])
 
 local sortPrefs = "macs"
 
@@ -52,11 +53,15 @@ else
    tablePreferences("rows_number", perPage)
 end
 
+local source_macs_only = false
+local host_macs_only = false
+local dhcp_macs_only = false
 
-if isEmptyString(host_macs_only) == false then
-   if(host_macs_only == "true") then host_macs_only = true else host_macs_only = false end
-else
-   host_macs_only = false
+if devices_mode == "host_macs_only" then
+   host_macs_only = true
+   source_macs_only = true   
+elseif devices_mode == "dhcp_macs_only" then
+   dhcp_macs_only = true   
 end
 
 interface.select(ifname)
@@ -66,12 +71,11 @@ to_skip = (currentPage-1) * perPage
 if(isEmptyString(vlan)) then vlan = 0 end
 if(sortOrder == "desc") then sOrder = false else sOrder = true end
 
---host_macs_only = false
-
 local macs_stats = interface.getMacsInfo(sortColumn, perPage, to_skip, sOrder,
 					 tonumber(vlan),
-					 host_macs_only --[[ skip special macs ]],
-					 host_macs_only, manufacturer)
+					 source_macs_only,
+					 host_macs_only, manufacturer,
+					 nil, device_type, "", dhcp_macs_only)
 
 local total_rows = 0
 

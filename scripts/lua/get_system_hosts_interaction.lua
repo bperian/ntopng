@@ -19,14 +19,9 @@ local icon_root = ntop.getHttpPrefix() .. '/img/interaction-graph-icons/'
 local icon_extension = '.png'
 links = {}
 
-function file_exists(path)
-   local f=io.open(path,"r")
-   if f~=nil then io.close(f) return true else return false end
-end
-
 function get_icon_url(name)
    local icon_url = icon_root..name..icon_extension
-   if (file_exists(httpdocs..icon_url)) then return icon_url else return '' end
+   if (ntop.exists(httpdocs..icon_url)) then return icon_url else return '' end
 end
 
 is_loopback = isLoopback(ifname)
@@ -58,7 +53,7 @@ for key, value in ipairs(flows_stats) do
 	 client_type = "syshost"
       else
 	 client_id = flows_stats[key]["cli.source_id"]..'-'..flows_stats[key]["cli.ip"]
-	 client_name = abbreviateString(cli_name, 20)
+	 client_name = shortenString(cli_name)
 	 client_type = "host"
       end
 
@@ -72,7 +67,7 @@ for key, value in ipairs(flows_stats) do
 	 server_type = "syshost"
       else
 	 server_id = flows_stats[key]["srv.source_id"]..'-'..flows_stats[key]["srv.ip"]
-	 server_name = abbreviateString(srv_name, 20)
+	 server_name = shortenString(srv_name)
 	 server_type = "host"
       end
 

@@ -9,14 +9,12 @@ require "lua_utils"
 
 sendHTTPContentTypeHeader('text/html')
 
-ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/header.inc")
-
 local prefs = ntop.getPrefs()
 
 local dbname = (prefs.mysql_dbname or '')
 
 -- read the db activities to notify the user about what is going on in the database
-local res = interface.execSQLQuery("show full processlist", false, false)
+-- local res = interface.execSQLQuery("show full processlist", false, false) -- CAREFUL, this can introudce a deadlock
 
 print [[
   <div class="container-narrow">
@@ -56,24 +54,25 @@ addLogoSvg()
 print[[
   </div>
   <div>
+<br>
 ]]
 
+print(" "..i18n("please_wait_page.waiting_for_db_msg", {dbname=dbname}))
 print[[
-Waiting for database <b>]] print(dbname) print[[</b> to become operational. You will be redirected as soon as the database is ready.
   </div>
 <br>
-Operations currently performed on the database are the following:
-<br></br>
-  <div><small>]]
-
+  <div>]]
 
 if res == nil then res = {} end
 if #res >= 1 then
    print[[
+<br>
+]] print(i18n("please_wait_page.operations_on_database_msg")) print [[
+<small>
 <table class="table  table-striped" width=100% height=100%>
   <thead>
     <tr>
-      <th>Database</th><th>State</th><th>Command</th><th>Id</th><th>User</th><th>Time</th><th>Info</th><th>Host</th>
+      <th>]] print(i18n("please_wait_page.database")) print[[</th><th>]] print(i18n("please_wait_page.state")) print[[</th><th>]] print(i18n("please_wait_page.command")) print[[</th><th>]] print(i18n("please_wait_page.id")) print[[</th><th>]] print(i18n("please_wait_page.user")) print[[</th><th>]] print(i18n("please_wait_page.time")) print[[</th><th>]] print(i18n("please_wait_page.info")) print[[</th><th>]] print(i18n("please_wait_page.host")) print[[</th>
     </tr>
   </thead>
   <tbody>
@@ -93,10 +92,11 @@ if #res >= 1 then
    print[[
   </tbody>
 </table>
+</small>
 ]]
 end
 
-print[[</small></div>
+print[[</div>
 </div> <!-- /container -->
 
 <script type="text/javascript">

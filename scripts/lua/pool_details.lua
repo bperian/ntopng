@@ -15,6 +15,9 @@ require "lua_utils"
 require "graph_utils"
 require "alert_utils"
 local host_pools_utils = require "host_pools_utils"
+local template = require "template_utils"
+
+local have_nedge = ntop.isnEdge()
 
 local pool_id     = _GET["pool"]
 local page        = _GET["page"]
@@ -27,6 +30,11 @@ interface.select(ifname)
 local ifstats = interface.getStats()
 local ifId = ifstats.id
 local pool_name = host_pools_utils.getPoolName(ifId, pool_id)
+local username = host_pools_utils.poolIdToUsername(pool_id)
+
+if _POST["reset_quotas"] ~= nil then
+  host_pools_utils.resetPoolsQuotas(ifId, tonumber(pool_id))
+end
 
 sendHTTPContentTypeHeader('text/html')
 ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/header.inc")
@@ -40,7 +48,9 @@ page_params["pool"] = pool_id
 page_params["page"] = page
 
 if(pool_id == nil) then
-    print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> Pool parameter is missing (internal error ?)</div>")
+   print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "
+	    ..i18n("pool_details.pool_parameter_missing_message")
+	    .."</div>")
     return
 end
 
@@ -51,7 +61,9 @@ print [[
       <ul class="nav navbar-nav">
 ]]
 
-print("<li><a href=\"#\">Host Pool: "..pool_name.."</A> </li>")
+print("<li><a href=\"#\">"
+	 ..i18n(ternary(have_nedge, "nedge.user", "pool_details.host_pool"))
+	 ..": "..pool_name.."</A> </li>")
 
 local go_page_params = table.clone(page_params)
 
@@ -62,12 +74,12 @@ else
   print("<li><a href=\""..getPageUrl(base_url, go_page_params).."\"><i class='fa fa-area-chart fa-lg'></i>\n")
 end
 
-if ntop.isEnterprise() and ifstats.inline and pool_id ~= host_pools_utils.DEFAULT_POOL_ID then
+if (ntop.isEnterprise() or ntop.isnEdge()) and ifstats.inline and pool_id ~= host_pools_utils.DEFAULT_POOL_ID then
   if page == "quotas" then
-    print("<li class=\"active\"><a href=\"#\">Quotas</i>\n")
+    print("<li class=\"active\"><a href=\"#\">"..i18n("quotas").."</i>\n")
   else
     go_page_params["page"] = "quotas"
-    print("<li><a href=\""..getPageUrl(base_url, go_page_params).."\">Quotas\n")
+    print("<li><a href=\""..getPageUrl(base_url, go_page_params).."\">"..i18n("quotas").."\n")
   end
 end
 
@@ -82,14 +94,40 @@ print [[
 local pools_stats = interface.getHostPoolsStats()
 local pool_stats = pools_stats and pools_stats[tonumber(pool_id)]
 
-if ntop.isEnterprise() and pool_id ~= host_pools_utils.DEFAULT_POOL_ID and ifstats.inline and (page == "quotas") and (pool_stats ~= nil) then
+if (ntop.isEnterprise() or ntop.isnEdge()) and pool_id ~= host_pools_utils.DEFAULT_POOL_ID and ifstats.inline and (page == "quotas") and (pool_stats ~= nil) then
+  print(
+    template.gen("modal_confirm_dialog.html", {
+      dialog={
+        id      = "reset_quotas_dialog",
+        action  = "$('#reset_quotas_form').submit()",
+        title   = i18n("host_pools.reset_quotas"),
+        message = i18n("host_pools.confirm_reset_pool_quotas", {pool=pool_name}),
+        confirm = i18n("host_pools.reset_quotas"),
+      }
+    })
+  )
+
+  print[[<form id="reset_quotas_form" method="POST">
+    <input name="csrf" value="]] print(ntop.getRandomCSRFValue()) print[[" type="hidden"/>
+    <input name="reset_quotas" value="" type="hidden" />
+  </form>]]
+
   host_pools_utils.printQuotas(pool_id, nil, page_params)
+
+  print[[
+  <button class="btn btn-default" data-toggle="modal" data-target="#reset_quotas_dialog" style="float:right;">]] print(i18n("host_pools.reset_quotas")) print[[</button>]]
+  if ntop.isnEdge() then
+    print[[<a href="]] print(ntop.getHttpPrefix()) print[[/lua/pro/nedge/admin/nf_edit_user.lua?page=categories&username=]] print(username)
+    print[["><button class="btn btn-default" type="button" style="float:right; margin-right:1em;">]] print(i18n("nedge.edit_quotas")) print[[</button></a>]]
+  end
+  print[[<br/><br/>]]
+  
 elseif page == "historical" then
   local rrdbase = host_pools_utils.getRRDBase(ifId, pool_id)
 
   if(not ntop.exists(rrdbase.."/bytes.rrd")) then
-    print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> No available data for Host Pool '"..pool_name.."'. ")
-    print('Host Pool timeseries can be enabled from the <A HREF="'..ntop.getHttpPrefix()..'/lua/admin/prefs.lua?tab=on_disk_ts"><i class="fa fa-flask"></i> Preferences</A>. Few minutes are necessary to see the first data points.</div>')
+    print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "..i18n("pool_details.no_available_data_for_host_pool_message",{pool_name=pool_name}))
+    print(" "..i18n("pool_details.host_pool_timeseries_enable_message",{url=ntop.getHttpPrefix().."/lua/admin/prefs.lua?tab=on_disk_ts",icon_flask="<i class=\"fa fa-flask\"></i>"})..'</div>')
   else
     local rrdfile
     if(not isEmptyString(_GET["rrd_file"])) then
@@ -99,7 +137,7 @@ elseif page == "historical" then
     end
 
     local host_url = getPageUrl(base_url, page_params)
-    drawRRD(ifId, 'pool:'..pool_id, rrdfile, _GET["zoom"], host_url, 1, _GET["epoch"], nil, makeTopStatsScriptsArray())
+    drawRRD(ifId, 'pool:'..pool_id, rrdfile, _GET["zoom"], host_url, 1, _GET["epoch"])
   end
 end
 

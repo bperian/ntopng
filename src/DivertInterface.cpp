@@ -67,7 +67,9 @@ static void* divertPacketPollLoop(void* ptr) {
 #else
     h.len = h.caplen = len, gettimeofday(&h.ts, NULL);
 #endif /* __OpenBSD__ */
-    iface->dissectPacket(0, &h, packet, &c, &srcHost, &dstHost, &flow);
+    iface->dissectPacket(DUMMY_BRIDGE_INTERFACE_ID,
+			 true /* ingress packet */,
+			 NULL, &h, packet, &c, &srcHost, &dstHost, &flow);
 
     /* Enable the row below to specify the firewall rule corresponding to the protocol */
 #if 0
@@ -99,7 +101,7 @@ DivertInterface::DivertInterface(const char *name) : NetworkInterface(name) {
   sin.sin_family = AF_INET, sin.sin_port = htons(port);
   sin_len = sizeof(struct sockaddr_in);
 
-  if(bind(sock, (struct sockaddr *) &sin, sin_len) == -1) {
+  if(::bind(sock, (struct sockaddr *) &sin, sin_len) == -1) {
     ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to bind divert socket to port %d", port);
     throw 1;
   }

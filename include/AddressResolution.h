@@ -26,8 +26,9 @@
 
 class AddressResolution {
   AddressList localNetworks;
+  int num_resolvers;
   u_int32_t num_resolved_addresses, num_resolved_fails;
-  pthread_t resolveThreadLoop;
+  pthread_t *resolveThreadLoop;
   Mutex m;
 
  public:
@@ -40,7 +41,7 @@ class AddressResolution {
   inline u_int8_t getNumLocalNetworks()       { return localNetworks.getNumAddresses();    };
   inline char *get_local_network(u_int8_t id) { return localNetworks.getAddressString(id); };
   bool setLocalNetworks(char *rule);
-  int16_t findAddress(int family, void *addr); /* if(rc > 0) networkId else notfound */
+  int16_t findAddress(int family, void *addr, u_int8_t *network_mask_bits = NULL);
   void setLocalNetwork(char *net)             { localNetworks.addAddresses(net);           };
   void getLocalNetworks(lua_State* vm);
   inline void dump()                          { localNetworks.dump(); }

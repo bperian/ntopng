@@ -152,7 +152,13 @@ print ('sort: [ ["' .. getDefaultTableSort("localhosts_"..criteria) ..'","' .. g
 print [[    showPagination: true, 
 ]]
 
-print('buttons: [ \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">' .. i18n("local_hosts_stats.criteria") .. '<span class="caret"></span></button> <ul class="dropdown-menu" role="menu" style="min-width: 90px;">')
+print('buttons: [ ')
+
+print[['<div class="btn-group pull-right">]]
+printIpVersionDropdown(base_url, page_params)
+print[[</div>']]
+
+print(', \'<div class="btn-group pull-right"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">' .. i18n("local_hosts_stats.criteria") .. '<span class="caret"></span></button> <ul class="dropdown-menu" role="menu" style="min-width: 90px;">')
 local criteria_params = table.clone(page_params)
 
 --for id, _ in ipairs(looking_glass_criteria) do
@@ -169,10 +175,6 @@ for id, _ in pairsByKeys(looking_glass_criteria, asc) do
 end
 
    print("</ul></div>'")
-
-   print[[, '<div class="btn-group pull-right">]]
-   printIpVersionDropdown(base_url, page_params)
-   print[[</div>']]
 
    print(" ],")
 
@@ -201,14 +203,33 @@ print [[
 			     css: {
 				textAlign: 'center'
 			     }
-			},
-			  ]]
+			}, {
+			     title: "]] print(i18n("show_alerts.alerts")) print[[",
+				 field: "column_alerts",
+				 sortable: true,
+	 	             css: {
+			        textAlign: 'center'
+			     }
 
-
-ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/hosts_stats_top.inc")
-
-print [[
+				 },
 			     {
+			     title: "]] print(i18n("name")) print[[",
+				 field: "column_name",
+				 sortable: true,
+	 	             css: {
+			        textAlign: 'left'
+			     }
+
+				 },
+			     {
+			     title: "]] print(i18n("seen_since")) print[[",
+				 field: "column_since",
+				 sortable: true,
+	 	             css: { 
+			        textAlign: 'center'
+			     }
+
+				 },    {
 			     title: "]] print(label) print [[",
 				 field: "column_]] print(criteria) print [[",
 				 sortable: true,
@@ -218,7 +239,38 @@ print [[
 			 },
 ]]
 
-ntop.dumpFile(dirs.installdir .. "/httpdocs/inc/hosts_stats_bottom.inc")
+print [[
+			     {
+			     title: "]] print(i18n("breakdown")) print[[",
+				 field: "column_breakdown",
+				 sortable: false,
+	 	             css: {
+			        textAlign: 'center'
+			     }
+				 },
+			     {
+			     title: "]] print(i18n("throughput")) print[[",
+				 field: "column_thpt",
+				 sortable: true,
+	 	             css: {
+			        textAlign: 'right'
+			     }
+				 },
+			     {
+			     title: "]] print(i18n("traffic")) print[[",
+				 field: "column_traffic",
+				 sortable: true,
+	 	             css: {
+			        textAlign: 'right'
+			     }
+				 }
+			     ]
+	       });
+
+
+       </script>
+
+]]
 
 
 

@@ -21,11 +21,13 @@
 
 #include "ntop_includes.h"
 
+#ifndef HAVE_NEDGE
+
 /* **************************************************** */
 
 static void* esLoop(void* ptr) {
-    ntop->getElasticSearch()->pushEStemplate();  // sends ES ntopng template
-    ntop->getElasticSearch()->indexESdata();
+  ntop->getElasticSearch()->pushEStemplate();  // sends ES ntopng template
+  ntop->getElasticSearch()->indexESdata();
   return(NULL);
 }
 
@@ -88,13 +90,13 @@ int ElasticSearch::sendToES(char* msg) {
   if(num_queued_elems >= ES_MAX_QUEUE_LEN) {
     if(!reportDrops) {
       ntop->getTrace()->traceEvent(TRACE_WARNING, "[ES] Export queue too long [%d]: expect drops",
-		 num_queued_elems);
+				   num_queued_elems);
       reportDrops = true;
     }
 
     elkDroppedFlowsQueueTooLong++;
     ntop->getTrace()->traceEvent(TRACE_INFO, "[ES] Message dropped. Total messages dropped: %lu\n",
-		 elkDroppedFlowsQueueTooLong);
+				 elkDroppedFlowsQueueTooLong);
 
     return(-1);
   }
@@ -137,12 +139,20 @@ void ElasticSearch::startFlowDump() {
 /* **************************************** */
 
 void ElasticSearch::indexESdata() {
-  const u_int watermark = 8, min_buf_size = 512;
-  char postbuf[16384];
+  const u_int min_buffered_flows = 8;
+  time_t last_dump = time(0);
+  char *postbuf = (char*) malloc(ES_BULK_BUFFER_SIZE);
+
+  if(!postbuf) {
+    ntop->getTrace()->traceEvent(TRACE_ERROR, "Cannot allocate ES bulk buffer");
+    return;
+  }
 
   while(!ntop->getGlobals()->isShutdown()) {
+    time_t now = time(0);
 
-    if(num_queued_elems >= watermark) {
+    if((num_queued_elems >= min_buffered_flows)
+          || ((num_queued_elems > 0) && (now >= last_dump + ES_BULK_MAX_DELAY))) {
       u_int len, num_flows;
       char index_name[64], header[256];
       struct tm* tm_info;
@@ -161,14 +171,14 @@ void ElasticSearch::indexESdata() {
       len = 0, num_flows = 0;
 
       listMutex.lock(__FILE__, __LINE__);
-      for(u_int i=0; (i<watermark) && ((sizeof(postbuf)-len) > min_buf_size); i++) {
+      for(u_int i=0; (i < num_queued_elems) && (len <= ES_BULK_BUFFER_SIZE); i++) {
         struct string_list *prev;
         prev = tail->prev;
-	len += snprintf(&postbuf[len], sizeof(postbuf)-len, "%s\n%s\n", header, tail->str), num_flows++;
+        len += snprintf(&postbuf[len], ES_BULK_BUFFER_SIZE-len, "%s\n%s\n", header, tail->str), num_flows++;
         free(tail->str);
         free(tail);
         tail = prev,
-	num_queued_elems--;
+	  num_queued_elems--;
         if(num_queued_elems == 0)
 	  head = NULL;
 
@@ -177,19 +187,26 @@ void ElasticSearch::indexESdata() {
       listMutex.unlock(__FILE__, __LINE__);
       postbuf[len] = '\0';
 
+      ntop->getTrace()->traceEvent(TRACE_INFO, "ES: Buffered request with %d flows (%d bytes)", num_flows, len);
+
       if(!Utils::postHTTPJsonData(ntop->getPrefs()->get_es_user(),
 				  ntop->getPrefs()->get_es_pwd(),
 				  ntop->getPrefs()->get_es_url(),
 				  postbuf)) {
 	/* Post failure */
+	ntop->getTrace()->traceEvent(TRACE_ERROR, "ES: POST request for %d flows (%d bytes) failed", num_flows, len);
 	sleep(1);
       } else {
 	ntop->getTrace()->traceEvent(TRACE_INFO, "Sent %u flow(s) to ES", num_flows);
 	elkExportedFlows += num_flows;
       }
+
+      last_dump = now;
     } else
       sleep(1);
   } /* while */
+
+  free(postbuf);
 }
 
 /* **************************************** */
@@ -229,24 +246,26 @@ void ElasticSearch::pushEStemplate() {
   template_file.read(postbuf, length); // read the whole file into the buffer
   postbuf[length] = '\0';
   if(template_file.is_open())
-    template_file.close();           // close file handle
+    template_file.close();            // close file handle
 
   while(max_attempts > 0) {
     if(!Utils::postHTTPJsonData(ntop->getPrefs()->get_es_user(),
 				ntop->getPrefs()->get_es_pwd(),
-				es_template_url,
-				postbuf)) {
+				es_template_url, postbuf)) {
       /* Post failure */
       sleep(1);
     } else {
       ntop->getTrace()->traceEvent(TRACE_INFO, "ntopng template successfully sent to ES");
-      if(postbuf) free(postbuf);
       break;
     }
+    
     max_attempts--;
   } /* while */
 
+  if(postbuf) delete[] postbuf;
+  
   if(max_attempts == 0)
     ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to send ntopng template (%s) to ES", template_path);
-
 }
+
+#endif

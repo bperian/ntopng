@@ -39,7 +39,7 @@ static HTTPserver *httpserver;
  * Send error message back to a client.
  */
 int send_error(struct mg_connection *conn, int status, const char *reason, const char *fmt, ...) {
-  va_list	ap;
+  va_list ap;
 
   conn->status_code = status;
 
@@ -67,6 +67,15 @@ int send_error(struct mg_connection *conn, int status, const char *reason, const
 
 /* ****************************************** */
 
+static inline const char * get_secure_cookie_attributes(const struct mg_request_info *request_info) {
+  if(request_info->is_ssl)
+    return " HttpOnly; Secure";
+  else
+    return " HttpOnly";
+}
+
+/* ****************************************** */
+#ifndef HAVE_NEDGE
 static void redirect_to_ssl(struct mg_connection *conn,
                             const struct mg_request_info *request_info) {
   const char *host = mg_get_header(conn, "Host");
@@ -87,7 +96,7 @@ static void redirect_to_ssl(struct mg_connection *conn,
     mg_printf(conn, "%s", "HTTP/1.1 500 Error\r\n\r\nHost: header is not set");
   }
 }
-
+#endif
 /* ****************************************** */
 
 // Generate session ID. buf must be 33 bytes in size.
@@ -112,6 +121,11 @@ static void set_cookie(const struct mg_connection *conn,
                        char *user, char *referer) {
   char key[256], session_id[64], random[64];
 
+  if(!strcmp(mg_get_request_info((struct mg_connection*)conn)->uri, "/metrics")
+     || !strncmp(mg_get_request_info((struct mg_connection*)conn)->uri, GRAFANA_URL, strlen(GRAFANA_URL))
+     || !strncmp(mg_get_request_info((struct mg_connection*)conn)->uri, POOL_MEMBERS_ASSOC_URL, strlen(POOL_MEMBERS_ASSOC_URL)))
+    return;
+
   // Authentication success:
   //   1. create new session
   //   2. set session ID token in the cookie
@@ -130,11 +144,11 @@ static void set_cookie(const struct mg_connection *conn,
 
   /* http://en.wikipedia.org/wiki/HTTP_cookie */
   mg_printf((struct mg_connection *)conn, "HTTP/1.1 302 Found\r\n"
-	    "Set-Cookie: session=%s; path=/; max-age=%u; HttpOnly\r\n"  // Session ID
-	    "Set-Cookie: user=%s; path=/; max-age=%u; HttpOnly\r\n"  // Set user, needed by JavaScript code
+	    "Set-Cookie: session=%s; path=/; max-age=%u;%s\r\n"  // Session ID
+	    "Set-Cookie: user=%s; path=/; max-age=%u;%s\r\n"  // Set user, needed by JavaScript code
 	    "Location: %s%s\r\n\r\n",
-	    session_id, HTTP_SESSION_DURATION,
-	    user, HTTP_SESSION_DURATION,
+	    session_id, HTTP_SESSION_DURATION, get_secure_cookie_attributes(mg_get_request_info((struct mg_connection*)conn)),
+	    user, HTTP_SESSION_DURATION, get_secure_cookie_attributes(mg_get_request_info((struct mg_connection*)conn)),
 	    ntop->getPrefs()->get_http_prefix(), referer ? referer : "/");
 
   /* Save session in redis */
@@ -174,17 +188,39 @@ static int checkCaptive(const struct mg_connection *conn,
     ntop->getTrace()->traceEvent(TRACE_NORMAL, "[CAPTIVE] %s @ %s/%08X [Redirecting to %s%s]",
 				 username, Utils::intoaV4((unsigned int)conn->request_info.remote_ip, buf, sizeof(buf)),
 				 (unsigned int)conn->request_info.remote_ip,
-				 (char*)mg_get_header(conn, "Host"), request_info->uri);
+				 mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
+				 request_info->uri);
 #endif
+
+    char bridge_interface[32];
+
+    if(!ntop->getUserAllowedIfname(username, bridge_interface, sizeof(bridge_interface)))
+      return(0);
 
     ntop->getUserHostPool(username, &host_pool_id);
     ntop->hasUserLimitedLifetime(username, &limited_lifetime);
 
-    ntop->addIPToLRUMatches(htonl((unsigned int)conn->request_info.remote_ip),
-			    host_pool_id, label, limited_lifetime);
+    if(!ntop->addIPToLRUMatches(htonl((unsigned int)conn->request_info.remote_ip),
+			    host_pool_id, label, limited_lifetime, bridge_interface))
+      return(0);
+
+    /* Success */
     return(1);
   }
 #endif
+
+  return(0);
+}
+
+/* ****************************************** */
+
+static int checkGrafana(const struct mg_connection *conn,
+			const struct mg_request_info *request_info) {
+
+  if(!strcmp(request_info->request_method, "OPTIONS") /* Allow for CORS inflight requests */
+    && !strncmp(request_info->uri, GRAFANA_URL, strlen(GRAFANA_URL)))
+    /* Success */
+    return(1);
 
   return(0);
 }
@@ -195,6 +231,7 @@ static int isWhitelistedURI(char *uri) {
   /* URL whitelist */
   if((!strcmp(uri,    LOGIN_URL))
      || (!strcmp(uri, AUTHORIZE_URL))
+     || (!strcmp(uri, BANNED_SITE_URL))
      || (!strcmp(uri, PLEASE_WAIT_URL))
      || (!strcmp(uri, HOTSPOT_DETECT_URL))
      || (!strcmp(uri, HOTSPOT_DETECT_LUA_URL))
@@ -244,6 +281,10 @@ static int is_authorized(const struct mg_connection *conn,
 
     return(ntop->checkUserPassword(username, password)
 	   && checkCaptive(conn, request_info, username, password));
+  }
+
+  if(checkGrafana(conn, request_info) == 1) {
+    return(1);
   }
 
   if(user_login_disabled) {
@@ -316,10 +357,15 @@ static int is_authorized(const struct mg_connection *conn,
 /* ****************************************** */
 
 static int isCaptiveConnection(struct mg_connection *conn) {
+  char *host = (char*)mg_get_header(conn, "Host");
+
   return(ntop->getPrefs()->isCaptivePortalEnabled()
-	 && (ntohs(conn->client.lsa.sin.sin_port) == 80)
-	 && (strcasestr((char*)mg_get_header(conn, "Host"), CONST_HELLO_HOST) == NULL)
-	 && (ntop->getPrefs()->get_alt_http_port() != 0));
+	 && (ntohs(conn->client.lsa.sin.sin_port) == 80
+	     || ntohs(conn->client.lsa.sin.sin_port) == 443)
+	 && (ntop->getPrefs()->get_alt_http_port() != 0)
+	 && host
+	 && (strcasestr(host, CONST_HELLO_HOST) == NULL)
+	 );
 }
 
 /* ****************************************** */
@@ -349,20 +395,24 @@ static void redirect_to_login(struct mg_connection *conn,
     if(referer)
       mg_printf(conn,
 		"HTTP/1.1 302 Found\r\n"
-		"Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0; HttpOnly\r\n"  // Session ID
+		"Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0;%s\r\n"  // Session ID
 		"Location: %s%s?referer=%s\r\n\r\n", /* FIX */
 		session_id,
+		get_secure_cookie_attributes(request_info),
 		ntop->getPrefs()->get_http_prefix(), CAPTIVE_PORTAL_URL, referer);
     else
       mg_printf(conn,
 		"HTTP/1.1 302 Found\r\n"
-		"Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0; HttpOnly\r\n"  // Session ID
+		"Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0;%s\r\n"  // Session ID
 		"Location: %s%s\r\n\r\n", /* FIX */
 		session_id,
+		get_secure_cookie_attributes(request_info),
 		ntop->getPrefs()->get_http_prefix(), CAPTIVE_PORTAL_URL);
   } else {
 #ifdef DEBUG
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[LOGIN] [Host: %s][URI: %s]", (char*)mg_get_header(conn, "Host"), request_info->uri);
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[LOGIN] [Host: %s][URI: %s]",
+				 mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
+				 request_info->uri);
 #endif
 
     mg_get_cookie(conn, "session", session_id, sizeof(session_id));
@@ -370,12 +420,13 @@ static void redirect_to_login(struct mg_connection *conn,
 
     mg_printf(conn,
 	      "HTTP/1.1 302 Found\r\n"
-	      "Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0; HttpOnly\r\n"  // Session ID
+	      "Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0;%s\r\n"  // Session ID
 	      "Location: %s%s?referer=%s%s%s%s\r\n\r\n", /* FIX */
 	      session_id,
+	      get_secure_cookie_attributes(request_info),
 	      ntop->getPrefs()->get_http_prefix(),
 	      Utils::getURL((char*)LOGIN_URL, buf, sizeof(buf)),
-	      (char*)mg_get_header(conn, "Host"),
+	      mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
 	      conn->request_info.uri,
 	      conn->request_info.query_string ? "%3F" /* ? */: "",
 	      conn->request_info.query_string ? conn->request_info.query_string : "");
@@ -384,6 +435,7 @@ static void redirect_to_login(struct mg_connection *conn,
 
 /* ****************************************** */
 
+#ifdef HAVE_MYSQL
 /* Redirect user to a courtesy page that is used when database schema is being updated.
    In the cookie, store the original URL we came from, so that after the authorization
    we could redirect back.
@@ -399,15 +451,17 @@ static void redirect_to_please_wait(struct mg_connection *conn,
 	    "HTTP/1.1 302 Found\r\n"
 	    // "HTTP/1.1 401 Unauthorized\r\n"
 	    // "WWW-Authenticate: Basic\r\n"
-	    "Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0; HttpOnly\r\n"  // Session ID
+	    "Set-Cookie: session=%s; path=/; expires=Thu, 01-Jan-1970 00:00:01 GMT; max-age=0;%s\r\n"  // Session ID
 	    "Location: %s%s?referer=%s%s%s\r\n\r\n",
 	    session_id,
+	    get_secure_cookie_attributes(request_info),
 	    ntop->getPrefs()->get_http_prefix(),
 	    Utils::getURL((char*)PLEASE_WAIT_URL, buf, sizeof(buf)),
 	    conn->request_info.uri,
 	    conn->request_info.query_string ? "%3F" /* ? */: "",
 	    conn->request_info.query_string ? conn->request_info.query_string : "");
 }
+#endif
 
 /* ****************************************** */
 
@@ -420,12 +474,13 @@ static void redirect_to_password_change(struct mg_connection *conn,
 
     mg_printf(conn,
 	      "HTTP/1.1 302 Found\r\n"
-	      "Set-Cookie: session=%s; path=/; HttpOnly\r\n"  // Session ID
+	      "Set-Cookie: session=%s; path=/;%s\r\n"  // Session ID
 	      "Location: %s%s?referer=%s%s%s%s\r\n\r\n", /* FIX */
 	      session_id,
+	      get_secure_cookie_attributes(request_info),
 	      ntop->getPrefs()->get_http_prefix(),
 	      Utils::getURL((char*)CHANGE_PASSWORD_ULR, buf, sizeof(buf)),
-	      (char*)mg_get_header(conn, "Host"),
+	      mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
 	      conn->request_info.uri,
 	      conn->request_info.query_string ? "%3F" /* ? */: "",
 	      conn->request_info.query_string ? conn->request_info.query_string : "");
@@ -463,7 +518,8 @@ static void authorize(struct mg_connection *conn,
     }
   }
 
-  if(isCaptiveConnection(conn) || (!ntop->checkUserPassword(user, password))) {
+  if(isCaptiveConnection(conn) || ntop->isCaptivePortalUser(user) ||
+	    (!ntop->checkUserPassword(user, password))) {
     // Authentication failure, redirect to login
     redirect_to_login(conn, request_info, (referer[0] == '\0') ? NULL : referer);
   } else {
@@ -509,7 +565,7 @@ static int handle_lua_request(struct mg_connection *conn) {
   u_int len;
   char username[33] = { 0 };
   char *referer = (char*)mg_get_header(conn, "Referer");
-  u_int8_t whitelisted;
+  u_int8_t whitelisted, authorized;
 
   if(referer == NULL)
     referer = (char*)"";
@@ -519,9 +575,20 @@ static int handle_lua_request(struct mg_connection *conn) {
 
   len = (u_int)strlen(request_info->uri);
 
+#ifdef HAVE_NEDGE
+  if(!ntop->getPro()->has_valid_license()) {
+    if (! ntop->getGlobals()->isShutdown()) {
+      ntop->getTrace()->traceEvent(TRACE_NORMAL, "License expired, shutting down...");
+      ntop->getGlobals()->shutdown();
+      ntop->shutdown();
+    }
+  }
+#endif
+
 #ifdef DEBUG
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "[Host: %s][URI: %s][%s][Referer: %s]",
-			       (char*)mg_get_header(conn, "Host"), request_info->uri,
+			       mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
+			       request_info->uri,
 			       request_info->query_string ? request_info->query_string : "",
 			       (char*)mg_get_header(conn, "Referer"));
 #endif
@@ -537,27 +604,33 @@ static int handle_lua_request(struct mg_connection *conn) {
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "################# [HTTP] %s [%s]",
 			       request_info->uri, referer);
 #endif
-  
+
+#ifdef HAVE_MYSQL
   if(ntop->getPrefs()->do_dump_flows_on_mysql()
      && !MySQLDB::isDbCreated()
      && strcmp(request_info->uri, PLEASE_WAIT_URL)) {
     redirect_to_please_wait(conn, request_info);
-  } else if(ntop->get_HTTPserver()->is_ssl_enabled()
-	    && (!request_info->is_ssl)	     
-	    && isCaptiveURL(request_info->uri)
-	    && (!strstr(referer, HOTSPOT_DETECT_LUA_URL))
-	    && (!strstr(referer, CAPTIVE_PORTAL_URL))
-	    && ((mg_get_header(conn, "Host") == NULL) || (mg_get_header(conn, "Host")[0] == '\0'))
-	    ) {
+  } else
+#endif
+#ifndef HAVE_NEDGE
+  if(ntop->get_HTTPserver()->is_ssl_enabled()
+     && (!request_info->is_ssl)
+     && isCaptiveURL(request_info->uri)
+     && (!strstr(referer, HOTSPOT_DETECT_LUA_URL))
+     && (!strstr(referer, CAPTIVE_PORTAL_URL))
+     // && ((mg_get_header(conn, "Host") == NULL) || (mg_get_header(conn, "Host")[0] == '\0'))
+     ) {
     redirect_to_ssl(conn, request_info);
     return(1);
-  } else if(!strcmp(request_info->uri, HOTSPOT_DETECT_URL)) {
+  } else
+#endif
+  if(!strcmp(request_info->uri, HOTSPOT_DETECT_URL)) {
     mg_printf(conn, "HTTP/1.1 302 Found\r\n"
 	      "Expires: 0\r\n"
 	      "Cache-Control: no-store, no-cache, must-revalidate\t\n"
 	      "Pragma: no-cache\r\n"
 	      "Location: http://%s%s%s%s\r\n\r\n",
-	      (char*)mg_get_header(conn, "Host"),
+	      mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
 	      HOTSPOT_DETECT_LUA_URL,
 	      request_info->query_string ? "?" : "",
 	      request_info->query_string ? request_info->query_string : "");
@@ -572,7 +645,7 @@ static int handle_lua_request(struct mg_connection *conn) {
 	      "Referer: %s\r\n"
 	      "Location: http://%s%s%s%s\r\n\r\n",
 	      request_info->uri,
-	      (char*)mg_get_header(conn, "Host"),
+	      mg_get_header(conn, "Host") ? mg_get_header(conn, "Host") : (char*)"",
 	      CAPTIVE_PORTAL_URL,
 	      request_info->query_string ? "?" : "",
 	      request_info->query_string ? request_info->query_string : "");
@@ -581,16 +654,29 @@ static int handle_lua_request(struct mg_connection *conn) {
 #endif
 
   whitelisted = isWhitelistedURI(request_info->uri);
+  authorized = is_authorized(conn, request_info, username, sizeof(username));
 
-  if((len > 4)
-     && ((strcmp(&request_info->uri[len-4], ".css") == 0)
-	 || (strcmp(&request_info->uri[len-3], ".js")) == 0))
+  if((len >= 3 && (!strncmp(&request_info->uri[len - 3], ".js", 3)))
+     || (len >= 4 && (!strncmp(&request_info->uri[len - 4], ".css", 4)
+		      || !strncmp(&request_info->uri[len - 4], ".map", 4)
+		      || !strncmp(&request_info->uri[len - 4], ".ttf", 4)))
+     || (len >= 6 && (!strncmp(&request_info->uri[len - 6], ".woff2", 6))))
     ;
-  else if((!whitelisted) && (!is_authorized(conn, request_info, username, sizeof(username)))) {
-    redirect_to_login(conn, request_info, (char*)mg_get_header(conn, "Host"));
+  else if((!whitelisted) && (!authorized)) {
+    if(conn->client.lsa.sin.sin_port == ntop->get_HTTPserver()->getSplashPort())
+      mg_printf(conn,
+		"HTTP/1.1 302 Found\r\n"
+		"Location: %s%s?referer=%s\r\n\r\n",
+		ntop->getPrefs()->get_http_prefix(), BANNED_SITE_URL,
+		mg_get_header(conn, "Host"));
+    else
+      redirect_to_login(conn, request_info, mg_get_header(conn, "Host") ?
+			mg_get_header(conn, "Host"): (char*)"");
+
     return(1);
   } else if ((strcmp(request_info->uri, CHANGE_PASSWORD_ULR) != 0)
       && (strcmp(request_info->uri, LOGOUT_URL) != 0)
+	     && authorized
       && ntop->mustChangePassword(username)) {
     redirect_to_password_change(conn, request_info);
     return(1);
@@ -617,26 +703,43 @@ static int handle_lua_request(struct mg_connection *conn) {
   }
 
   if((strncmp(request_info->uri, "/lua/", 5) == 0)
+     || (strcmp(request_info->uri, "/metrics") == 0)
      || (strcmp(request_info->uri, "/") == 0)) {
     /* Lua Script */
     char path[255] = { 0 }, uri[2048];
     struct stat buf;
     bool found;
 
-    if(strstr(request_info->uri, "/lua/pro/enterprise/")
-       && (!ntop->getPrefs()->is_enterprise_edition())) {
+    if(strstr(request_info->uri, "/lua/pro")
+       && (!ntop->getPrefs()->is_pro_edition())) {
       return(send_error(conn, 403 /* Forbidden */, request_info->uri,
-			"Enterprise edition license required: this features in still under development and it will be released in the near future"));
+			"Professional edition license required"));
     }
 
-    if(isCaptiveConnection(conn) && (!isCaptiveURL(request_info->uri))) {
+    if(strstr(request_info->uri, "/lua/pro/enterprise")
+       && (!ntop->getPrefs()->is_enterprise_edition())) {
+      return(send_error(conn, 403 /* Forbidden */, request_info->uri,
+			"Enterprise edition license required"));
+    }
+
+    if((!whitelisted)
+       && isCaptiveConnection(conn)
+       && (!isCaptiveURL(request_info->uri))) {
       redirect_to_login(conn, request_info, (referer[0] == '\0') ? NULL : referer);
       return(0);
     } else {
-      snprintf(path, sizeof(path), "%s%s", httpserver->get_scripts_dir(),
-	       Utils::getURL(len == 1 ? (char*)"/lua/index.lua" : request_info->uri,
-			     uri, sizeof(uri)));
-      
+      if(strcmp(request_info->uri, "/metrics") == 0)
+	snprintf(path, sizeof(path), "%s/lua/metrics.lua",
+	  httpserver->get_scripts_dir());
+      else
+	snprintf(path, sizeof(path), "%s%s%s",
+	       httpserver->get_scripts_dir(),
+	       Utils::getURL(len == 1 ? (char*)"/lua/index.lua" : request_info->uri, uri, sizeof(uri)),
+	       len > 1 && request_info->uri[len-1] == '/' ? (char*)"index.lua" : (char*)"");
+
+      if(strlen(path) > 4 && strncmp(&path[strlen(path) - 4], ".lua", 4))
+	snprintf(&path[strlen(path)], sizeof(path) - strlen(path) - 1, "%s", (char*)".lua");
+
       ntop->fixPath(path);
       found = ((stat(path, &buf) == 0) && (S_ISREG(buf.st_mode))) ? true : false;
     }
@@ -681,9 +784,10 @@ HTTPserver::HTTPserver(const char *_docs_dir, const char *_scripts_dir) {
   static char ports[256], ssl_cert_path[MAX_PATH] = { 0 }, access_log_path[MAX_PATH] = { 0 };
   const char *http_binding_addr = ntop->getPrefs()->get_http_binding_address();
   const char *https_binding_addr = ntop->getPrefs()->get_https_binding_address();
+  char tmpBuf[8];
   bool use_ssl = false;
   bool use_http = true;
-  struct stat buf;
+  struct stat statsBuf;
   int stat_rc;
 
   static char *http_options[] = {
@@ -701,23 +805,16 @@ HTTPserver::HTTPserver(const char *_docs_dir, const char *_scripts_dir) {
   if(ntop->getPrefs()->get_http_port() == 0) use_http = false;
 
   if(use_http) {
-    char tmp[16];
-
-    if(ntop->getPrefs()->get_alt_http_port() != 0)
-      snprintf(tmp, sizeof(tmp), ",%d", ntop->getPrefs()->get_alt_http_port());
-    else
-      tmp[0] = '\0';
-
-    snprintf(ports, sizeof(ports), "%s%s%d%s",
+    snprintf(ports, sizeof(ports), "%s%s%d",
 	     http_binding_addr,
 	     (http_binding_addr[0] == '\0') ? "" : ":",
-	     ntop->getPrefs()->get_http_port(), tmp);
+	     ntop->getPrefs()->get_http_port());
   }
 
   snprintf(ssl_cert_path, sizeof(ssl_cert_path), "%s/ssl/%s",
 	   docs_dir, CONST_HTTPS_CERT_NAME);
 
-  stat_rc = stat(ssl_cert_path, &buf);
+  stat_rc = stat(ssl_cert_path, &statsBuf);
 
   if((ntop->getPrefs()->get_https_port() > 0) && (stat_rc == 0)) {
     int i;
@@ -752,22 +849,47 @@ HTTPserver::HTTPserver(const char *_docs_dir, const char *_scripts_dir) {
     ssl_enabled = false;
   }
 
+  /* Alternate HTTP port (required for Captive Portal) */
+  if(use_http && ntop->getPrefs()->get_alt_http_port()) {
+    snprintf(&ports[strlen(ports)], sizeof(ports) - strlen(ports) - 1, ",%s%s%d",
+	     http_binding_addr,
+	     (http_binding_addr[0] == '\0') ? "" : ":",
+	     ntop->getPrefs()->get_alt_http_port());
+  }
+
   if((!use_http) && (!use_ssl) & (!ssl_enabled)) {
     if(stat_rc != 0)
-      ntop->getTrace()->traceEvent(TRACE_ERROR,
+      ntop->getTrace()->traceEvent(TRACE_WARNING,
 				   "Unable to start HTTP server: HTTP is disabled and the SSL certificate is missing.");
-    ntop->getTrace()->traceEvent(TRACE_ERROR,
-				 "Starting the HTTP server on the default port");   
+    ntop->getTrace()->traceEvent(TRACE_WARNING,
+				 "Starting the HTTP server on the default port");
     snprintf(ports, sizeof(ports), "%d", ntop->getPrefs()->get_http_port());
     use_http = true;
   }
-  
+
+  ntop->getRedis()->get((char*)SPLASH_HTTP_PORT, tmpBuf, sizeof(tmpBuf), true);
+  if(tmpBuf[0] != '\0') {
+    http_splash_port = atoi(tmpBuf);
+
+    if(http_splash_port > 0) {
+      snprintf(&ports[strlen(ports)], sizeof(ports) - strlen(ports) - 1, ",%s%s%d",
+	       http_binding_addr,
+	       (http_binding_addr[0] == '\0') ? "" : ":",
+	       http_splash_port);
+
+      /* Mongoose uses network byte order */
+      http_splash_port = ntohs(http_splash_port);
+    } else
+      ntop->getTrace()->traceEvent(TRACE_WARNING, "Ignoring HTTP splash port (%s)", tmpBuf);
+  } else
+    http_splash_port = 0;
+
   if(ntop->getPrefs()->is_access_log_enabled()) {
     int i;
-    
-    snprintf(access_log_path, sizeof(access_log_path), "%s/ntopng_access.log", 
+
+    snprintf(access_log_path, sizeof(access_log_path), "%s/ntopng_access.log",
 	     ntop->get_working_dir());
-    
+
     for(i=0; http_options[i] != NULL; i++)
       ;
 
@@ -796,7 +918,7 @@ HTTPserver::HTTPserver(const char *_docs_dir, const char *_scripts_dir) {
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "Web server dirs [%s][%s]", docs_dir, scripts_dir);
 
   if(use_http)
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "HTTP server listening on port(s) %s", 
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "HTTP server listening on port(s) %s",
 				 ports);
 
   if(use_ssl & ssl_enabled)
